@@ -8,6 +8,7 @@ import { pool, migrate } from "./database.js";
 import { authenticate, requireAdmin, requireUser } from "./auth.js";
 import { hashPassword, hashToken, randomToken, verifyPassword } from "./security.js";
 import { getPanelSummary, getServers, PterodactylError, applicationRequest } from "./pterodactyl.js";
+import { clientRequest, decryptCredential, encryptCredential } from "./pterodactyl-client.js";
 
 const app = Fastify({ logger: true, bodyLimit: 1_048_576, trustProxy: config.NODE_ENV === "production" });
 await app.register(cors, { origin: config.WEB_ORIGIN, credentials: true });
@@ -135,7 +136,92 @@ for (const [name, path] of Object.entries(resources)) {
     }
   });
 }
-app.get("/api/overview", { preHandler: requireUser }, async (_request, reply) => {
+
+async function userClientToken(userId: string) {
+  if (!pool) return null;
+  const result = await pool.query("SELECT encrypted_token,iv,auth_tag FROM user_integrations WHERE user_id=$1", [userId]);
+  if (!result.rowCount) return null;
+  return decryptCredential(result.rows[0]);
+}
+app.get("/api/profile/pterodactyl-credential", { preHandler: requireUser }, async (request, reply) => {
+  if (!dbRequired(reply)) return;
+  const result = await pool!.query("SELECT updated_at FROM user_integrations WHERE user_id=$1", [request.sessionUser!.id]);
+  return { connected: Boolean(result.rowCount), updated_at: result.rows[0]?.updated_at ?? null };
+});
+app.post("/api/profile/pterodactyl-credential", { preHandler: requireUser }, async (request, reply) => {
+  if (!dbRequired(reply) || !originGuard(request, reply)) return;
+  const parsed = z.object({ apiKey: z.string().min(20).max(300) }).safeParse(request.body);
+  if (!parsed.success) return reply.code(400).send({ error: "Enter a valid Pterodactyl Client API key" });
+  if (!config.CREDENTIAL_ENCRYPTION_KEY) return reply.code(503).send({ error: "Credential encryption is not configured on the server" });
+  try { await clientRequest(parsed.data.apiKey, "/account"); }
+  catch (error) {
+    const e = error as { statusCode?: number; message?: string };
+    return reply.code(e.statusCode ?? 502).send({ error: "Could not validate Pterodactyl Client API key", message: e.message ?? "Connection failed" });
+  }
+  const encrypted = encryptCredential(parsed.data.apiKey);
+  await pool!.query("INSERT INTO user_integrations(user_id,encrypted_token,iv,auth_tag) VALUES($1,$2,$3,$4) ON CONFLICT(user_id) DO UPDATE SET encrypted_token=EXCLUDED.encrypted_token,iv=EXCLUDED.iv,auth_tag=EXCLUDED.auth_tag,updated_at=NOW()",
+    [request.sessionUser!.id, encrypted.encrypted_token, encrypted.iv, encrypted.auth_tag]);
+  await audit(request.sessionUser!.id, "pterodactyl.client_key.connect", request, "integration", "pterodactyl");
+  return { connected: true };
+});
+app.delete("/api/profile/pterodactyl-credential", { preHandler: requireUser }, async (request, reply) => {
+  if (!dbRequired(reply) || !originGuard(request, reply)) return;
+  await pool!.query("DELETE FROM user_integrations WHERE user_id=$1", [request.sessionUser!.id]);
+  await audit(request.sessionUser!.id, "pterodactyl.client_key.disconnect", request, "integration", "pterodactyl");
+  return { connected: false };
+});
+app.get("/api/profile/servers", { preHandler: requireUser }, async (request, reply) => {
+  let token: string | null;
+  try { token = await userClientToken(request.sessionUser!.id); }
+  catch { return reply.code(503).send({ error: "Could not decrypt saved credentials. Check CREDENTIAL_ENCRYPTION_KEY." }); }
+  if (!token) return reply.code(409).send({ error: "Connect your own Pterodactyl Client API key in profile settings first." });
+  try {
+    const response = await clientRequest<{ data: Array<{ attributes: Record<string, any> }> }>(token, "/servers");
+    return { data: response.data.map(({ attributes: s }) => ({
+      id: s.identifier, uuid: s.uuid, identifier: s.identifier, name: s.name,
+      description: s.description ?? "", node: s.node ?? "—", ownerId: request.sessionUser!.id,
+      status: s.is_suspended ? "suspended" : s.is_installing ? "installing" : (s.current_state ?? s.status ?? "unknown"),
+      limits: { memory: s.limits?.memory ?? 0, disk: s.limits?.disk ?? 0, cpu: s.limits?.cpu ?? 0 }
+    })) };
+  } catch (error) {
+    const e = error as { statusCode?: number; message?: string };
+    return reply.code(e.statusCode ?? 502).send({ error: "Unable to load your servers", message: e.message ?? "Pterodactyl Client API failed" });
+  }
+});
+app.post("/api/profile/servers/:identifier/power", { preHandler: requireUser }, async (request, reply) => {
+  if (!originGuard(request, reply)) return;
+  const params = z.object({ identifier: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/) }).safeParse(request.params);
+  const body = z.object({ signal: z.enum(["start","stop","restart","kill"]) }).safeParse(request.body);
+  if (!params.success || !body.success) return reply.code(400).send({ error: "Invalid server or power signal" });
+  let token: string | null;
+  try { token = await userClientToken(request.sessionUser!.id); }
+  catch { return reply.code(503).send({ error: "Could not decrypt saved credentials" }); }
+  if (!token) return reply.code(409).send({ error: "Connect your Pterodactyl Client API key first" });
+  try {
+    await clientRequest(token, "/servers/" + params.data.identifier + "/power", "POST", { signal: body.data.signal });
+    await audit(request.sessionUser!.id, "server.power." + body.data.signal, request, "server", params.data.identifier);
+    return { ok: true, signal: body.data.signal };
+  } catch (error) {
+    const e = error as { statusCode?: number; message?: string };
+    return reply.code(e.statusCode ?? 502).send({ error: "Server power action failed", message: e.message ?? "Pterodactyl Client API failed" });
+  }
+});
+app.get("/api/profile/servers/:identifier/files", { preHandler: requireUser }, async (request, reply) => {
+  const params = z.object({ identifier: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/) }).safeParse(request.params);
+  const query = z.object({ directory: z.string().max(1000).default("/") }).safeParse(request.query);
+  if (!params.success || !query.success) return reply.code(400).send({ error: "Invalid server or directory" });
+  let token: string | null;
+  try { token = await userClientToken(request.sessionUser!.id); }
+  catch { return reply.code(503).send({ error: "Could not decrypt saved credentials" }); }
+  if (!token) return reply.code(409).send({ error: "Connect your Pterodactyl Client API key first" });
+  try { return await clientRequest(token, "/servers/" + params.data.identifier + "/files/list?directory=" + encodeURIComponent(query.data.directory)); }
+  catch (error) {
+    const e = error as { statusCode?: number; message?: string };
+    return reply.code(e.statusCode ?? 502).send({ error: "File listing failed", message: e.message ?? "Pterodactyl Client API failed" });
+  }
+});
+
+app.get("/api/overview", { preHandler: requireAdmin }, async (_request, reply) => {
   if (!pterodactylConfigured) return reply.code(503).send({ error: "Pterodactyl is not configured", message: "Set PTERODACTYL_URL and PTERODACTYL_APPLICATION_KEY on the API server." });
   try { return { ...(await getPanelSummary()), connection: "connected", source: "pterodactyl" }; }
   catch (error) {
@@ -143,7 +229,7 @@ app.get("/api/overview", { preHandler: requireUser }, async (_request, reply) =>
     return reply.code(e.statusCode).send({ error: "Pterodactyl connection failed", message: e.message });
   }
 });
-app.get("/api/servers", { preHandler: requireUser }, async (_request, reply) => {
+app.get("/api/servers", { preHandler: requireAdmin }, async (_request, reply) => {
   try { return await getServers(); }
   catch (error) {
     const e = error instanceof PterodactylError ? error : new PterodactylError("Could not reach Pterodactyl.");
