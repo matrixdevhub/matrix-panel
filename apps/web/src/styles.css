@@ -29,3 +29,5 @@
 @media(max-width:760px){.profile-settings-grid{grid-template-columns:1fr}}
 
 .admin-inline-form{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:14px 18px;border-bottom:1px solid var(--border)}.admin-inline-form>b{width:100%;font-size:13px}.admin-inline-form input{min-width:120px;max-width:190px;flex:1;border:1px solid var(--border);border-radius:8px;background:var(--panel);color:var(--text);padding:10px 11px;font:12px 'DM Sans',sans-serif}.admin-inline-form .button{white-space:nowrap}.admin-action-message{padding:8px 18px;color:var(--green);font-size:12px}.admin-inline-form .credential-error{padding:0}
+
+.redeem-form-card{max-width:620px}.redeem-form-card .profile-form{padding:20px}.redeem-form-card .admin-action-message{padding:0 20px 18px}
