@@ -221,6 +221,60 @@ app.get("/api/profile/servers/:identifier/files", { preHandler: requireUser }, a
   }
 });
 
+
+const clientResourcePaths: Record<string, string> = {
+  backups: "/backups", schedules: "/schedules", databases: "/databases",
+  network: "/network/allocations", settings: "/settings", startup: "/startup", users: "/users"
+};
+app.get("/api/profile/servers/:identifier/:section", { preHandler: requireUser }, async (request, reply) => {
+  const params = z.object({ identifier: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/), section: z.string() }).safeParse(request.params);
+  if (!params.success || !clientResourcePaths[params.data.section]) return reply.code(404).send({ error: "Unknown server resource" });
+  let token: string | null;
+  try { token = await userClientToken(request.sessionUser!.id); } catch { return reply.code(503).send({ error: "Could not decrypt saved credentials" }); }
+  if (!token) return reply.code(409).send({ error: "Connect your Pterodactyl Client API key first" });
+  try { return await clientRequest(token, "/servers/" + params.data.identifier + clientResourcePaths[params.data.section]); }
+  catch (error) { const e = error as { statusCode?: number; message?: string }; return reply.code(e.statusCode ?? 502).send({ error: "Could not load server resource", message: e.message ?? "Pterodactyl Client API failed" }); }
+});
+app.get("/api/profile/servers/:identifier/files/contents", { preHandler: requireUser }, async (request, reply) => {
+  const params = z.object({ identifier: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/) }).safeParse(request.params);
+  const query = z.object({ file: z.string().min(1).max(1000) }).safeParse(request.query);
+  if (!params.success || !query.success) return reply.code(400).send({ error: "Invalid file path" });
+  let token: string | null;
+  try { token = await userClientToken(request.sessionUser!.id); } catch { return reply.code(503).send({ error: "Could not decrypt saved credentials" }); }
+  if (!token) return reply.code(409).send({ error: "Connect your Pterodactyl Client API key first" });
+  try { return await clientRequest<string>(token, "/servers/" + params.data.identifier + "/files/contents?file=" + encodeURIComponent(query.data.file)); }
+  catch (error) { const e = error as { statusCode?: number; message?: string }; return reply.code(e.statusCode ?? 502).send({ error: "Could not read file", message: e.message ?? "Pterodactyl Client API failed" }); }
+});
+app.put("/api/profile/servers/:identifier/files/contents", { preHandler: requireUser }, async (request, reply) => {
+  if (!originGuard(request, reply)) return;
+  const params = z.object({ identifier: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/) }).safeParse(request.params);
+  const query = z.object({ file: z.string().min(1).max(1000) }).safeParse(request.query);
+  const body = z.object({ content: z.string().max(2_000_000) }).safeParse(request.body);
+  if (!params.success || !query.success || !body.success) return reply.code(400).send({ error: "Invalid file update" });
+  let token: string | null;
+  try { token = await userClientToken(request.sessionUser!.id); } catch { return reply.code(503).send({ error: "Could not decrypt saved credentials" }); }
+  if (!token) return reply.code(409).send({ error: "Connect your Pterodactyl Client API key first" });
+  try {
+    await clientRequest(token, "/servers/" + params.data.identifier + "/files/write?file=" + encodeURIComponent(query.data.file), "POST", body.data.content);
+    await audit(request.sessionUser!.id, "server.file.write", request, "server", params.data.identifier);
+    return { ok: true };
+  } catch (error) { const e = error as { statusCode?: number; message?: string }; return reply.code(e.statusCode ?? 502).send({ error: "Could not write file", message: e.message ?? "Pterodactyl Client API failed" }); }
+});
+app.post("/api/profile/servers/:identifier/backups", { preHandler: requireUser }, async (request, reply) => {
+  if (!originGuard(request, reply)) return;
+  const params = z.object({ identifier: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/) }).safeParse(request.params);
+  const body = z.object({ name: z.string().max(100).optional() }).safeParse(request.body ?? {});
+  if (!params.success || !body.success) return reply.code(400).send({ error: "Invalid backup request" });
+  let token: string | null;
+  try { token = await userClientToken(request.sessionUser!.id); } catch { return reply.code(503).send({ error: "Could not decrypt saved credentials" }); }
+  if (!token) return reply.code(409).send({ error: "Connect your Pterodactyl Client API key first" });
+  try {
+    const result = await clientRequest(token, "/servers/" + params.data.identifier + "/backups", "POST", body.data);
+    await audit(request.sessionUser!.id, "server.backup.create", request, "server", params.data.identifier);
+    return reply.code(201).send(result);
+  } catch (error) { const e = error as { statusCode?: number; message?: string }; return reply.code(e.statusCode ?? 502).send({ error: "Could not create backup", message: e.message ?? "Pterodactyl Client API failed" }); }
+});
+
 app.get("/api/overview", { preHandler: requireAdmin }, async (_request, reply) => {
   if (!pterodactylConfigured) return reply.code(503).send({ error: "Pterodactyl is not configured", message: "Set PTERODACTYL_URL and PTERODACTYL_APPLICATION_KEY on the API server." });
   try { return { ...(await getPanelSummary()), connection: "connected", source: "pterodactyl" }; }

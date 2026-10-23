@@ -22,8 +22,8 @@ export async function clientRequest<T = unknown>(token: string, path: string, me
   if (!config.PTERODACTYL_URL) throw Object.assign(new Error("PTERODACTYL_URL is not configured"), { statusCode: 503 });
   const response = await fetch(config.PTERODACTYL_URL.replace(/\/+$/, "") + "/api/client" + path, {
     method,
-    headers: { Authorization: "Bearer " + token, Accept: "Application/vnd.pterodactyl.v1+json", "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    headers: { Authorization: "Bearer " + token, Accept: "Application/vnd.pterodactyl.v1+json", "Content-Type": typeof body === "string" ? "text/plain" : "application/json" },
+    body: body === undefined ? undefined : typeof body === "string" ? body : JSON.stringify(body),
     signal: AbortSignal.timeout(15000)
   });
   if (!response.ok) {
@@ -32,5 +32,7 @@ export async function clientRequest<T = unknown>(token: string, path: string, me
     throw Object.assign(new Error(message), { statusCode });
   }
   if (response.status === 204) return undefined as T;
-  return await response.json() as T;
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) return await response.json() as T;
+  return await response.text() as T;
 }
