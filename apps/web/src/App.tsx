@@ -54,16 +54,29 @@ export default function App() {
   const [resourceLoading, setResourceLoading] = useState(false);
   const [resourceRefresh, setResourceRefresh] = useState(0);
   const [resourceError, setResourceError] = useState("");
+  const [clientApiKey, setClientApiKey] = useState("");
+  const [credentialConnected, setCredentialConnected] = useState(false);
+  const [credentialBusy, setCredentialBusy] = useState(false);
+  const [credentialError, setCredentialError] = useState("");
+  const [powerBusy, setPowerBusy] = useState("");
+  const [selectedServer, setSelectedServer] = useState<ServerItem | null>(null);
+  const [consoleOutput, setConsoleOutput] = useState<string[]>([]);
+  const [consoleInput, setConsoleInput] = useState("");
+  const [consoleStatus, setConsoleStatus] = useState("Connect a Client API key to open console.");
+  const consoleSocket = useRef<WebSocket | null>(null);
 
   async function refresh() {
     setLoading(true); setError("");
     try {
       const h = await api<Health>("/api/health");
       setHealth(h);
-      if (h.pterodactyl === "configured") {
+      if (authUser?.role === "admin" && h.pterodactyl === "configured") {
         const o = await api<Overview>("/api/overview");
         const s = credentialConnected ? await api<{data: ServerItem[]}>("/api/profile/servers") : await api<{data: ServerItem[]}>("/api/servers");
         setOverview(o); setServers(s.data);
+      } else if (credentialConnected) {
+        const s = await api<{data: ServerItem[]}>("/api/profile/servers");
+        setOverview(null); setServers(s.data);
       } else {
         setOverview(null); setServers([]);
       }
@@ -74,10 +87,35 @@ export default function App() {
   }
   useEffect(() => {
     void api<{ user: { username: string; role: string } }>("/api/auth/me")
-      .then(result => { setAuthUser(result.user); void refresh(); })
+      .then(result => { setAuthUser(result.user); })
       .catch(() => { setAuthUser(null); })
       .finally(() => setAuthChecking(false));
   }, []);
+
+
+  useEffect(() => { if (authUser) void refresh(); }, [authUser, credentialConnected]);
+
+  useEffect(() => {
+    if (!authUser) return;
+    void api<{connected: boolean}>("/api/profile/pterodactyl-credential")
+      .then(result => setCredentialConnected(result.connected))
+      .catch(() => setCredentialConnected(false));
+  }, [authUser]);
+
+  useEffect(() => {
+    if (!selectedServer) return;
+    if (!credentialConnected) { setConsoleStatus("Connect your Pterodactyl Client API key to open this console."); return; }
+    const apiOrigin = API || window.location.origin;
+    const socketUrl = apiOrigin.replace(/^http/, "ws") + "/api/profile/servers/" + encodeURIComponent(selectedServer.identifier) + "/console";
+    const socket = new WebSocket(socketUrl);
+    consoleSocket.current = socket;
+    setConsoleOutput([]); setConsoleStatus("Connecting to server console…");
+    socket.onopen = () => setConsoleStatus("Console connected");
+    socket.onmessage = event => setConsoleOutput(previous => [...previous, String(event.data)].slice(-400));
+    socket.onerror = () => setConsoleStatus("Console connection error");
+    socket.onclose = event => setConsoleStatus(event.reason || "Console disconnected");
+    return () => { socket.close(); if (consoleSocket.current === socket) consoleSocket.current = null; };
+  }, [selectedServer, credentialConnected]);
 
   useEffect(() => {
     if (active === "Overview" || active === "Servers" || !authUser || authUser.role !== "admin") { setResourceRecords([]); setResourceError(""); return; }
@@ -97,7 +135,7 @@ export default function App() {
     try {
       const response = await fetch(`${API}/api/auth/login`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ login: loginName, password: loginPassword }) });
       const result = await response.json(); if (!response.ok) throw new Error(result.message || result.error || "Login failed");
-      setAuthUser(result.user); await refresh();
+      setAuthUser(result.user);
     } catch (e) { setLoginError(e instanceof Error ? e.message : "Login failed"); }
     finally { setLoginBusy(false); }
   }
@@ -132,6 +170,8 @@ export default function App() {
 
         {error && <div className="alert error"><ShieldCheck size={18}/><div><b>API connection issue</b><p>{error}</p></div><button className="icon-btn" onClick={() => void refresh()} aria-label="Retry"><RefreshCw size={15}/></button></div>}
         {authUser?.role === "admin" && health?.pterodactyl !== "configured" && !error && <div className="alert setup"><div className="setup-icon"><Zap size={19}/></div><div><b>Connect your Pterodactyl panel</b><p>Set the panel URL and Application API key in the backend <code>.env</code> file. The key is never sent to this browser.</p><a href="https://pterodactyl.io/panel/1.0/getting_started.html" target="_blank" rel="noreferrer">Pterodactyl setup guide <ArrowUpRight size={13}/></a></div></div>}
+
+        <section className="panel-card credential-card"><div className="table-toolbar"><div className="table-title"><div className="table-title-icon"><ShieldCheck size={17}/></div><div><b>Your Pterodactyl Client API</b><small>{credentialConnected ? "Credential is encrypted on the API server." : "Connect your own key to access your servers and console."}</small></div></div><span className={`health-chip ${credentialConnected ? "healthy" : "waiting"}`}>{credentialConnected ? "Connected" : "Not connected"}</span></div><form className="credential-form" onSubmit={async event => { event.preventDefault(); setCredentialBusy(true); setCredentialError(""); try { const response = await fetch(`${API}/api/profile/pterodactyl-credential`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ apiKey: clientApiKey }) }); const payload = await response.json(); if (!response.ok) throw new Error(payload.message || payload.error || "Could not connect"); setCredentialConnected(true); setClientApiKey(""); } catch (error) { setCredentialError(error instanceof Error ? error.message : "Could not connect"); } finally { setCredentialBusy(false); } }}><label className="auth-label">Client API key<input type="password" autoComplete="off" value={clientApiKey} onChange={event => setClientApiKey(event.target.value)} placeholder="Paste your Pterodactyl Client API key" minLength={20} maxLength={300}/></label><button className="button primary" type="submit" disabled={credentialBusy || clientApiKey.length < 20}>{credentialBusy ? "Connecting…" : "Connect key"}</button>{credentialConnected && <button className="button secondary" type="button" onClick={async () => { await fetch(`${API}/api/profile/pterodactyl-credential`, { method: "DELETE", credentials: "include" }); setCredentialConnected(false); setServers([]); }}>Disconnect</button>}</form>{credentialError && <p className="credential-error">{credentialError}</p>}<p className="credential-help">Use your own Pterodactyl Client API key. It is never returned to the browser, and Pterodactyl still enforces your server permissions.</p></section>
 
         <section className="section-heading"><div><h2>Infrastructure</h2><p>Live totals from your Pterodactyl installation.</p></div><span className="live-label"><span className="status-dot good"/>{isConnected ? "LIVE CONNECTION" : "AWAITING CONNECTION"}</span></section>
         <div className="stats-grid">{stats.map((stat, i) => <article className="stat-card" key={stat.label}><div className="stat-top"><div className={`stat-icon icon-${i}`}><stat.icon size={18}/></div><span className="stat-kicker">{["SERVERS","ACTIVITY","NODES","LOCATIONS"][i]}</span></div><div className="stat-value">{loading ? <span className="skeleton"/> : stat.value}</div><div className="stat-bottom"><span>{stat.label}</span><span className="stat-detail">{stat.detail}</span></div></article>)}</div>
