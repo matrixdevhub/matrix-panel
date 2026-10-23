@@ -17,3 +17,5 @@
 .auth-submit{width:100%;justify-content:center;padding:13px;margin-top:3px}
 .auth-note{color:#777f98;line-height:1.6;font-size:11px;text-align:center}
 @media(max-width:520px){.auth-card{padding:26px 21px}}
+
+.credential-card{margin-bottom:22px}.credential-form{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;padding:0 18px 14px}.credential-form .auth-label{flex:1;min-width:230px}.credential-form .button{white-space:nowrap}.credential-help,.credential-error{padding:0 18px 16px;margin:0;font-size:12px;line-height:1.6;color:var(--muted)}.credential-error{color:#ff8f9c}.server-power-actions{display:flex;gap:5px}.server-power-actions .row-action{font-size:12px;font-weight:700}.server-power-actions .row-action:disabled{opacity:.45;cursor:wait}.resource-view .panel-card{overflow:hidden}.resource-view .table-wrap{max-width:100%;overflow:auto}.resource-view table{min-width:760px}
