@@ -285,6 +285,35 @@ app.get("/api/profile/servers/:identifier/files/contents", { preHandler: require
   try { return await clientRequest<string>(token, "/servers/" + params.data.identifier + "/files/contents?file=" + encodeURIComponent(query.data.file)); }
   catch (error) { const e = error as { statusCode?: number; message?: string }; return reply.code(e.statusCode ?? 502).send({ error: "Could not read file", message: e.message ?? "Pterodactyl Client API failed" }); }
 });
+app.delete("/api/profile/servers/:identifier/files", { preHandler: requireUser }, async (request, reply) => {
+  if (!originGuard(request, reply)) return;
+  const params = z.object({ identifier: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/) }).safeParse(request.params);
+  const body = z.object({ root: z.string().min(1).max(1000), files: z.array(z.string().min(1).max(255)).min(1).max(20) }).safeParse(request.body);
+  if (!params.success || !body.success || body.data.root !== "/plugins" || body.data.files.some(name => name.includes("/") || name.includes("\\") || name === "." || name === ".." || !name.toLowerCase().endsWith(".jar"))) {
+    return reply.code(400).send({ error: "Invalid plugin delete request" });
+  }
+  let token: string | null;
+  try { token = await userClientToken(request.sessionUser!.id); } catch { return reply.code(503).send({ error: "Could not decrypt saved credentials" }); }
+  if (!token) return reply.code(409).send({ error: "Connect your Pterodactyl Client API key first" });
+  try {
+    await clientRequest(token, "/servers/" + params.data.identifier + "/files/delete", "POST", body.data);
+    await audit(request.sessionUser!.id, "server.plugin.delete", request, "server", params.data.identifier);
+    return { ok: true };
+  } catch (error) { const e = error as { statusCode?: number; message?: string }; return reply.code(e.statusCode ?? 502).send({ error: "Could not delete plugin", message: e.message ?? "Pterodactyl Client API failed" }); }
+});
+app.post("/api/profile/servers/:identifier/plugins/upload-url", { preHandler: requireUser }, async (request, reply) => {
+  if (!originGuard(request, reply)) return;
+  const params = z.object({ identifier: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/) }).safeParse(request.params);
+  if (!params.success) return reply.code(400).send({ error: "Invalid server identifier" });
+  let token: string | null;
+  try { token = await userClientToken(request.sessionUser!.id); } catch { return reply.code(503).send({ error: "Could not decrypt saved credentials" }); }
+  if (!token) return reply.code(409).send({ error: "Connect your Pterodactyl Client API key first" });
+  try {
+    const result = await clientRequest<unknown>(token, "/servers/" + params.data.identifier + "/files/upload?directory=%2Fplugins");
+    await audit(request.sessionUser!.id, "server.plugin.upload_url", request, "server", params.data.identifier);
+    return result;
+  } catch (error) { const e = error as { statusCode?: number; message?: string }; return reply.code(e.statusCode ?? 502).send({ error: "Could not prepare plugin upload", message: e.message ?? "Pterodactyl Client API failed" }); }
+});
 app.put("/api/profile/servers/:identifier/files/contents", { preHandler: requireUser }, async (request, reply) => {
   if (!originGuard(request, reply)) return;
   const params = z.object({ identifier: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/) }).safeParse(request.params);
