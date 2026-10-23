@@ -63,6 +63,15 @@ export default function App() {
   const [consoleOutput, setConsoleOutput] = useState<string[]>([]);
   const [consoleInput, setConsoleInput] = useState("");
   const [consoleStatus, setConsoleStatus] = useState("Connect a Client API key to open console.");
+  const [serverTab, setServerTab] = useState("Console");
+  const [serverResource, setServerResource] = useState<Record<string, unknown>[]>([]);
+  const [fileEntries, setFileEntries] = useState<Record<string, unknown>[]>([]);
+  const [fileDirectory, setFileDirectory] = useState("/");
+  const [filePath, setFilePath] = useState("");
+  const [fileContent, setFileContent] = useState("");
+  const [fileDirty, setFileDirty] = useState(false);
+  const [serverResourceLoading, setServerResourceLoading] = useState(false);
+  const [serverResourceError, setServerResourceError] = useState("");
   const consoleSocket = useRef<WebSocket | null>(null);
 
   async function refresh() {
@@ -103,7 +112,7 @@ export default function App() {
   }, [authUser]);
 
   useEffect(() => {
-    if (!selectedServer) return;
+    if (!selectedServer || serverTab !== "Console") return;
     if (!credentialConnected) { setConsoleStatus("Connect your Pterodactyl Client API key to open this console."); return; }
     const apiOrigin = API || window.location.origin;
     const socketUrl = apiOrigin.replace(/^http/, "ws") + "/api/profile/servers/" + encodeURIComponent(selectedServer.identifier) + "/console";
@@ -115,7 +124,7 @@ export default function App() {
     socket.onerror = () => setConsoleStatus("Console connection error");
     socket.onclose = event => setConsoleStatus(event.reason || "Console disconnected");
     return () => { socket.close(); if (consoleSocket.current === socket) consoleSocket.current = null; };
-  }, [selectedServer, credentialConnected]);
+  }, [selectedServer, credentialConnected, serverTab]);
 
   useEffect(() => {
     if (active === "Overview" || active === "Servers" || !authUser || authUser.role !== "admin") { setResourceRecords([]); setResourceError(""); return; }
@@ -139,6 +148,32 @@ export default function App() {
     } catch (e) { setLoginError(e instanceof Error ? e.message : "Login failed"); }
     finally { setLoginBusy(false); }
   }
+
+
+  useEffect(() => {
+    if (!selectedServer || !credentialConnected || serverTab === "Console") return;
+    let cancelled = false;
+    setServerResourceLoading(true); setServerResourceError("");
+    const base = `${API}/api/profile/servers/${encodeURIComponent(selectedServer.identifier)}`;
+    const load = async () => {
+      if (serverTab === "Files") {
+        const response = await fetch(base + "/files?directory=" + encodeURIComponent(fileDirectory), { credentials: "include" });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.message || payload.error || "Could not list files");
+        if (!cancelled) setFileEntries(Array.isArray(payload.data) ? payload.data.map((entry: any) => entry.attributes ?? entry) : []);
+      } else {
+        const section = ({ Backups: "backups", Schedules: "schedules", Databases: "databases", Network: "network", Startup: "startup", Settings: "settings", Users: "users" } as Record<string,string>)[serverTab];
+        if (!section) return;
+        const response = await fetch(base + "/" + section, { credentials: "include" });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.message || payload.error || "Could not load " + serverTab);
+        const rows = Array.isArray(payload.data) ? payload.data.map((entry: any) => entry.attributes ?? entry) : payload.attributes ? [payload.attributes] : [payload];
+        if (!cancelled) setServerResource(rows as Record<string,unknown>[]);
+      }
+    };
+    void load().catch(error => { if (!cancelled) { setServerResourceError(error instanceof Error ? error.message : "Could not load resource"); setServerResource([]); setFileEntries([]); } }).finally(() => { if (!cancelled) setServerResourceLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedServer, credentialConnected, serverTab, fileDirectory]);
 
   const filtered = servers.filter(s => (s.name + " " + s.identifier).toLowerCase().includes(query.toLowerCase()));
   const isConnected = health?.pterodactyl === "configured" && overview?.connection === "connected";
@@ -189,6 +224,13 @@ export default function App() {
       </div>
     </main>
 
-    {selectedServer && <div className="console-overlay" role="dialog" aria-modal="true" aria-label={selectedServer.name + " console"}><section className="console-modal"><header className="console-header"><div><b>{selectedServer.name}</b><small>{selectedServer.identifier} · {consoleStatus}</small></div><button className="icon-btn" onClick={() => setSelectedServer(null)} aria-label="Close console"><X size={18}/></button></header><div className="console-output">{consoleOutput.map((line,index) => <pre key={index}>{line}</pre>)}</div><form className="console-input-row" onSubmit={event => { event.preventDefault(); if (consoleSocket.current?.readyState === WebSocket.OPEN && consoleInput.trim()) { consoleSocket.current.send(JSON.stringify({ event: "send command", args: [consoleInput] })); setConsoleInput(""); } }}><input value={consoleInput} onChange={event => setConsoleInput(event.target.value)} placeholder="Enter a server command…" disabled={!credentialConnected}/><button className="button primary" type="submit" disabled={!credentialConnected || !consoleInput.trim()}>Send</button></form><p className="credential-help">Console commands run with the permissions of your connected Pterodactyl account.</p></section></div>}
+    {selectedServer && <div className="console-overlay" role="dialog" aria-modal="true" aria-label={selectedServer.name + " management"}>
+      <section className="console-modal"><header className="console-header"><div><b>{selectedServer.name}</b><small>{selectedServer.identifier} · {serverTab === "Console" ? consoleStatus : "Server management"}</small></div><button className="icon-btn" onClick={() => setSelectedServer(null)} aria-label="Close server management"><X size={18}/></button></header>
+      <nav className="server-tabs">{["Console","Files","Backups","Schedules","Databases","Network","Startup","Settings","Users"].map(tab => <button key={tab} className={serverTab === tab ? "active" : ""} onClick={() => { setServerTab(tab); setServerResourceError(""); if (tab === "Files") { setFileDirectory("/"); setFilePath(""); } }}>{tab}</button>)}</nav>
+      {!credentialConnected ? <div className="server-resource-empty">Connect your Pterodactyl Client API key on the dashboard to use server management.</div> :
+      serverTab === "Console" ? <><div className="console-output">{consoleOutput.map((line,index) => <pre key={index}>{line}</pre>)}</div><form className="console-input-row" onSubmit={event => { event.preventDefault(); if (consoleSocket.current?.readyState === WebSocket.OPEN && consoleInput.trim()) { consoleSocket.current.send(JSON.stringify({ event: "send command", args: [consoleInput] })); setConsoleInput(""); } }}><input value={consoleInput} onChange={event => setConsoleInput(event.target.value)} placeholder="Enter a server command…" disabled={!credentialConnected}/><button className="button primary" type="submit" disabled={!credentialConnected || !consoleInput.trim()}>Send</button></form></> :
+      serverTab === "Files" ? <div className="file-manager"><div className="file-toolbar"><button className="button secondary" disabled={fileDirectory === "/"} onClick={() => setFileDirectory(fileDirectory.split("/").filter(Boolean).slice(0,-1).length ? "/" + fileDirectory.split("/").filter(Boolean).slice(0,-1).join("/") : "/")}>Up</button><span>{fileDirectory}</span></div>{serverResourceError && <p className="credential-error">{serverResourceError}</p>}{filePath ? <><div className="file-toolbar"><b>{filePath}</b><button className="button secondary" onClick={() => { setFilePath(""); setFileDirty(false); }}>Back</button><button className="button primary" disabled={!fileDirty} onClick={async () => { const response = await fetch(`${API}/api/profile/servers/${encodeURIComponent(selectedServer.identifier)}/files/contents?file=${encodeURIComponent(filePath)}`, {method:"PUT",credentials:"include",headers:{"Content-Type":"application/json"},body:JSON.stringify({content:fileContent})}); if (!response.ok) { const p = await response.json(); setServerResourceError(p.message || p.error || "Save failed"); } else setFileDirty(false); }}>Save</button></div><textarea className="file-editor" value={fileContent} onChange={event => { setFileContent(event.target.value); setFileDirty(true); }} spellCheck={false}/></> : <div className="file-list">{serverResourceLoading ? <p>Loading files…</p> : fileEntries.map((entry,index) => { const name = String(entry.name ?? "Unnamed"); const isFile = Boolean(entry.is_file ?? entry.isFile ?? true); return <button key={name + index} onClick={async () => { const path = (fileDirectory === "/" ? "" : fileDirectory) + "/" + name; if (!isFile) { setFileDirectory(path); return; } setServerResourceError(""); const response = await fetch(`${API}/api/profile/servers/${encodeURIComponent(selectedServer.identifier)}/files/contents?file=${encodeURIComponent(path)}`, {credentials:"include"}); const content = await response.text(); if (!response.ok) { setServerResourceError(content || "Could not read file"); return; } setFilePath(path); setFileContent(content); setFileDirty(false); }}>{isFile ? "▤" : "▣"} <b>{name}</b><small>{isFile ? String(entry.size ?? "file") : "folder"}</small></button>; })}</div>}</div> :
+      <div className="server-resource-view">{serverTab === "Backups" && <div className="file-toolbar"><span>Create a server backup</span><button className="button primary" onClick={async () => { const response = await fetch(`${API}/api/profile/servers/${encodeURIComponent(selectedServer.identifier)}/backups`, {method:"POST",credentials:"include",headers:{"Content-Type":"application/json"},body:JSON.stringify({})}); if (!response.ok) { const p = await response.json(); setServerResourceError(p.message || p.error || "Backup creation failed"); } else setServerResourceError("Backup request submitted."); }}><Plus size={14}/> Create backup</button></div>}{serverResourceError && <p className="credential-error">{serverResourceError}</p>}{serverResourceLoading ? <p>Loading {serverTab.toLowerCase()}…</p> : <pre>{JSON.stringify(serverResource,null,2)}</pre>}</div>}
+      <p className="credential-help">All actions use your own Pterodactyl Client API key and its permissions.</p></section></div>}
   </div>;
 }
