@@ -1,0 +1,20 @@
+{
+  "name": "matrix-panel",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Modern Pterodactyl management panel",
+  "workspaces": ["apps/api", "apps/web"],
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c blue,magenta \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "npm --workspace @matrix-panel/api run dev",
+    "dev:web": "npm --workspace @matrix-panel/web run dev",
+    "build": "npm run build --workspace @matrix-panel/api && npm run build --workspace @matrix-panel/web",
+    "start": "npm --workspace @matrix-panel/api run start",
+    "typecheck": "npm run typecheck --workspace @matrix-panel/api && npm run typecheck --workspace @matrix-panel/web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "typescript": "^5.7.3"
+  },
+  "engines": { "node": ">=20" }
+}
