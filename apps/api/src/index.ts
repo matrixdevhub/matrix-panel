@@ -327,6 +327,50 @@ app.put("/api/admin/settings/:key", { preHandler: requireAdmin }, async (request
 });
 
 
+
+app.patch("/api/admin/users/:id", { preHandler: requireAdmin }, async (request, reply) => {
+  if (!dbRequired(reply) || !originGuard(request, reply)) return;
+  const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(request.params);
+  const body = z.object({ role: z.enum(["admin","user"]).optional(), is_active: z.boolean().optional() }).strict().safeParse(request.body);
+  if (!params.success || !body.success || !Object.keys(body.data).length) return reply.code(400).send({ error: "Invalid user update" });
+  if (String(params.data.id) === request.sessionUser!.id && (body.data.role === "user" || body.data.is_active === false)) return reply.code(400).send({ error: "You cannot disable or demote your own active session" });
+  const client = await pool!.connect();
+  try {
+    await client.query("BEGIN");
+    const found = await client.query("SELECT id,role,is_active FROM users WHERE id=$1 FOR UPDATE", [params.data.id]);
+    if (!found.rowCount) { await client.query("ROLLBACK"); return reply.code(404).send({ error: "User not found" }); }
+    const current = found.rows[0];
+    if (current.role === "admin" && current.is_active && (body.data.role === "user" || body.data.is_active === false)) {
+      const admins = await client.query("SELECT COUNT(*)::int AS count FROM users WHERE role='admin' AND is_active=TRUE");
+      if (admins.rows[0].count <= 1) { await client.query("ROLLBACK"); return reply.code(409).send({ error: "The last active administrator cannot be demoted or disabled" }); }
+    }
+    const updated = await client.query("UPDATE users SET role=$1,is_active=$2,updated_at=NOW() WHERE id=$3 RETURNING id,email,username,role,is_active,created_at", [body.data.role ?? current.role, body.data.is_active ?? current.is_active, params.data.id]);
+    if (body.data.is_active === false) await client.query("DELETE FROM sessions WHERE user_id=$1", [params.data.id]);
+    await client.query("COMMIT");
+    await audit(request.sessionUser!.id, "users.update", request, "user", String(params.data.id));
+    return { data: updated.rows[0] };
+  } catch (error) { await client.query("ROLLBACK"); throw error; }
+  finally { client.release(); }
+});
+app.get("/api/admin/settings", { preHandler: requireAdmin }, async (_request, reply) => {
+  if (!dbRequired(reply)) return;
+  const rows = await pool!.query("SELECT setting_key,setting_value,updated_at FROM panel_settings ORDER BY setting_key");
+  return { data: rows.rows };
+});
+app.put("/api/admin/settings/:key", { preHandler: requireAdmin }, async (request, reply) => {
+  if (!dbRequired(reply) || !originGuard(request, reply)) return;
+  const params = z.object({ key: z.string().min(2).max(64).regex(/^[a-z0-9_.-]+$/) }).safeParse(request.params);
+  const body = z.object({ value: z.unknown() }).strict().safeParse(request.body);
+  if (!params.success || !body.success) return reply.code(400).send({ error: "Invalid setting" });
+  const allowed = new Set(["site.name","site.description","registration.enabled","support.url","links.discord","links.youtube","links.website"]);
+  if (!allowed.has(params.data.key)) return reply.code(400).send({ error: "This setting key is not editable through this endpoint" });
+  const value = JSON.stringify(body.data.value);
+  if (value.length > 4000) return reply.code(413).send({ error: "Setting value is too large" });
+  const result = await pool!.query("INSERT INTO panel_settings(setting_key,setting_value,updated_by) VALUES($1,$2::jsonb,$3) ON CONFLICT(setting_key) DO UPDATE SET setting_value=EXCLUDED.setting_value,updated_by=EXCLUDED.updated_by,updated_at=NOW() RETURNING setting_key,setting_value,updated_at", [params.data.key,value,request.sessionUser!.id]);
+  await audit(request.sessionUser!.id, "settings.update", request, "setting", params.data.key);
+  return { data: result.rows[0] };
+});
+
 app.setErrorHandler((error, _request, reply) => { app.log.error(error); reply.code(500).send({ error: "Internal server error" }); });
 try { await migrate(); await app.listen({ host: config.API_HOST, port: config.API_PORT }); }
 catch (error) { app.log.error(error); process.exit(1); }
