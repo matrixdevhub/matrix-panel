@@ -11,8 +11,10 @@ Self-hosted game-server management dashboard designed for real Pterodactyl Panel
 - Scrypt password hashing, opaque server-side sessions stored as SHA-256 hashes, HttpOnly/SameSite cookies, login/setup rate limits and role-based route guards.
 - Authenticated profile preferences, admin-only user/audit and Pterodactyl resource endpoints, plans, redeem codes, balances and settings APIs.
 - Per-user Pterodactyl Client API key connection; credentials are encrypted at rest with AES-256-GCM and are never returned to the browser.
-- Per-user server inventory, power action endpoints and file listing proxy. Pterodactyl continues to enforce the permissions attached to each user's own Client API key.
-- Admin UI views for live users, nodes, locations, nests, mounts, plans, redeem codes, balances, settings and audit data.
+- Per-user server inventory, power actions, authenticated WebSocket console proxy, file listing/read/write, backup creation, and read access to schedules, databases, network allocations, startup, settings and server users. Pterodactyl continues to enforce permissions attached to each user's own Client API key.
+- Admin UI views for live users, nodes, locations, nests, mounts, plans, redeem codes, balances, settings and audit data, including user/plan/code creation and balance adjustment forms.
+- User UI for profile updates, password changes, preferences/themes, plan history, balance and redeem-code activation.
+- Server UI with console, power controls, file editor and tabs for backups, schedules, databases, network, startup, settings and users.
 - Responsive sign-in screen; API keys stay on the server.
 
 ## Requirements
