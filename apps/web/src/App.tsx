@@ -61,7 +61,8 @@ export default function App() {
       const h = await api<Health>("/api/health");
       setHealth(h);
       if (h.pterodactyl === "configured") {
-        const [o, s] = await Promise.all([api<Overview>("/api/overview"), api<{data: ServerItem[]}>("/api/servers")]);
+        const o = await api<Overview>("/api/overview");
+        const s = credentialConnected ? await api<{data: ServerItem[]}>("/api/profile/servers") : await api<{data: ServerItem[]}>("/api/servers");
         setOverview(o); setServers(s.data);
       } else {
         setOverview(null); setServers([]);
@@ -130,7 +131,7 @@ export default function App() {
         <section className="welcome-row"><div><div className="eyebrow"><span className="eyebrow-line"/> YOUR INFRASTRUCTURE</div><h1>{active === "Overview" ? "Overview" : active}</h1><p className="subtitle">Monitor your game servers and manage your infrastructure.</p></div><div className="header-buttons"><button className="button secondary" onClick={() => void refresh()} disabled={loading}><RefreshCw size={15} className={loading ? "spin" : ""}/> Refresh</button><button className="button primary" onClick={() => { setActive("Servers"); }}><Plus size={16}/> View servers</button></div></section>
 
         {error && <div className="alert error"><ShieldCheck size={18}/><div><b>API connection issue</b><p>{error}</p></div><button className="icon-btn" onClick={() => void refresh()} aria-label="Retry"><RefreshCw size={15}/></button></div>}
-        {health?.pterodactyl !== "configured" && !error && <div className="alert setup"><div className="setup-icon"><Zap size={19}/></div><div><b>Connect your Pterodactyl panel</b><p>Set the panel URL and Application API key in the backend <code>.env</code> file. The key is never sent to this browser.</p><a href="https://pterodactyl.io/panel/1.0/getting_started.html" target="_blank" rel="noreferrer">Pterodactyl setup guide <ArrowUpRight size={13}/></a></div></div>}
+        {authUser?.role === "admin" && health?.pterodactyl !== "configured" && !error && <div className="alert setup"><div className="setup-icon"><Zap size={19}/></div><div><b>Connect your Pterodactyl panel</b><p>Set the panel URL and Application API key in the backend <code>.env</code> file. The key is never sent to this browser.</p><a href="https://pterodactyl.io/panel/1.0/getting_started.html" target="_blank" rel="noreferrer">Pterodactyl setup guide <ArrowUpRight size={13}/></a></div></div>}
 
         <section className="section-heading"><div><h2>Infrastructure</h2><p>Live totals from your Pterodactyl installation.</p></div><span className="live-label"><span className="status-dot good"/>{isConnected ? "LIVE CONNECTION" : "AWAITING CONNECTION"}</span></section>
         <div className="stats-grid">{stats.map((stat, i) => <article className="stat-card" key={stat.label}><div className="stat-top"><div className={`stat-icon icon-${i}`}><stat.icon size={18}/></div><span className="stat-kicker">{["SERVERS","ACTIVITY","NODES","LOCATIONS"][i]}</span></div><div className="stat-value">{loading ? <span className="skeleton"/> : stat.value}</div><div className="stat-bottom"><span>{stat.label}</span><span className="stat-detail">{stat.detail}</span></div></article>)}</div>
