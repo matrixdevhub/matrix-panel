@@ -2,6 +2,8 @@ import Fastify from "fastify";
 import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
+import websocket from "@fastify/websocket";
+import WebSocket from "ws";
 import { z } from "zod";
 import { config, pterodactylConfigured } from "./config.js";
 import { pool, migrate } from "./database.js";
@@ -14,6 +16,7 @@ const app = Fastify({ logger: true, bodyLimit: 1_048_576, trustProxy: config.NOD
 await app.register(cors, { origin: config.WEB_ORIGIN, credentials: true });
 await app.register(cookie);
 await app.register(rateLimit, { max: 100, timeWindow: "1 minute" });
+await app.register(websocket);
 app.addHook("preHandler", authenticate);
 const COOKIE = "matrix_session";
 const cookieOptions = { path: "/", httpOnly: true, secure: config.NODE_ENV === "production", sameSite: "strict" as const, maxAge: 604800 };
@@ -221,6 +224,43 @@ app.get("/api/profile/servers/:identifier/files", { preHandler: requireUser }, a
   }
 });
 
+
+
+app.get("/api/profile/servers/:identifier/console", { websocket: true, preHandler: requireUser }, (browserSocket, request) => {
+  void (async () => {
+    const params = z.object({ identifier: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/) }).safeParse(request.params);
+    if (!params.success) { browserSocket.close(1008, "Invalid server identifier"); return; }
+    let token: string | null;
+    try { token = await userClientToken(request.sessionUser!.id); }
+    catch { browserSocket.close(1011, "Could not decrypt saved credentials"); return; }
+    if (!token) { browserSocket.close(1008, "Connect your Pterodactyl Client API key first"); return; }
+    try {
+      const credentials = await clientRequest<{ data: { socket: string; token: string } }>(token, "/servers/" + params.data.identifier + "/websocket");
+      const remote = new WebSocket(credentials.data.socket, { handshakeTimeout: 10000 });
+      let authenticated = false;
+      const closeBoth = (code?: number, reason?: Buffer) => {
+        if (browserSocket.readyState === WebSocket.OPEN || browserSocket.readyState === WebSocket.CONNECTING) browserSocket.close(code, reason?.toString());
+        if (remote.readyState === WebSocket.OPEN || remote.readyState === WebSocket.CONNECTING) remote.close();
+      };
+      remote.on("open", () => {
+        remote.send(JSON.stringify({ event: "auth", args: [credentials.data.token] }));
+        authenticated = true;
+      });
+      remote.on("message", data => { if (browserSocket.readyState === WebSocket.OPEN) browserSocket.send(data.toString()); });
+      remote.on("close", (code, reason) => { if (browserSocket.readyState === WebSocket.OPEN) browserSocket.close(code, reason.toString()); });
+      remote.on("error", () => closeBoth(1011, Buffer.from("Pterodactyl console connection failed")));
+      browserSocket.on("message", data => {
+        if (remote.readyState !== WebSocket.OPEN || !authenticated) return;
+        remote.send(data.toString());
+      });
+      browserSocket.on("close", () => { if (remote.readyState === WebSocket.OPEN) remote.close(); });
+      browserSocket.on("error", () => closeBoth());
+    } catch (error) {
+      const e = error as { message?: string };
+      if (browserSocket.readyState === WebSocket.OPEN) browserSocket.close(1011, (e.message ?? "Console connection failed").slice(0,120));
+    }
+  })();
+});
 
 const clientResourcePaths: Record<string, string> = {
   backups: "/backups", schedules: "/schedules", databases: "/databases",
