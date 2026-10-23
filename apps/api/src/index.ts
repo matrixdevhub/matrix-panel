@@ -371,6 +371,15 @@ app.put("/api/admin/settings/:key", { preHandler: requireAdmin }, async (request
   return { data: result.rows[0] };
 });
 
+
+app.get("/api/admin/redeem-codes", { preHandler: requireAdmin }, async (request, reply) => {
+  if (!dbRequired(reply)) return;
+  const parsed = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50) }).safeParse(request.query);
+  if (!parsed.success) return reply.code(400).send({ error: "Invalid limit" });
+  const result = await pool!.query("SELECT id,plan_key,duration_days,max_uses,uses,expires_at,created_at FROM redeem_codes ORDER BY id DESC LIMIT $1", [parsed.data.limit]);
+  return { data: result.rows };
+});
+
 app.setErrorHandler((error, _request, reply) => { app.log.error(error); reply.code(500).send({ error: "Internal server error" }); });
 try { await migrate(); await app.listen({ host: config.API_HOST, port: config.API_PORT }); }
 catch (error) { app.log.error(error); process.exit(1); }
