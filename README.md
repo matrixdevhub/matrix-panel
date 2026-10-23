@@ -34,3 +34,12 @@ Self-hosted game-server management dashboard designed for real Pterodactyl Panel
 ## Work still remaining
 
 This is not production-ready and has not yet been tested against a live database or Pterodactyl instance. Console/WebSocket, file editing/upload/download, backups, schedules, full admin CRUD, billing/payment processing and deployment hardening still need implementation. Do not expose this development build publicly until the remaining work is completed and tested.
+
+
+## CI and production deployment templates
+
+- GitHub Actions checks the API/web TypeScript projects and builds both workspaces on pushes and pull requests.
+- `deploy/nginx.conf.example` serves the built SPA and proxies API + WebSocket traffic to localhost port 3001.
+- `deploy/matrix-panel.service.example` is a hardened systemd service template. Create a dedicated `matrix-panel` Linux account and install the environment file at `/etc/matrix-panel/matrix-panel.env` before enabling it.
+
+These are deployment templates, not a claim that a live server has been provisioned. Configure HTTPS, database backups, firewall rules, and a unique encryption/session secret before production use. Do not commit `.env` files or Pterodactyl API keys.

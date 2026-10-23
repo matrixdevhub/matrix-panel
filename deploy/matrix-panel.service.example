@@ -1,0 +1,24 @@
+[Unit]
+Description=Matrix Panel API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=matrix-panel
+Group=matrix-panel
+WorkingDirectory=/opt/matrix-panel
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/matrix-panel/matrix-panel.env
+ExecStart=/usr/bin/npm --workspace @matrix-panel/api run start
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/matrix-panel
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
