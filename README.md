@@ -1,56 +1,31 @@
 # Matrix Panel
 
-Modern self-hosted control dashboard designed to connect to a real Pterodactyl Panel. No Supabase.
+Self-hosted game-server management dashboard designed for real Pterodactyl Panel integration. The UI does not fabricate server data.
 
-## Current working scope
+## Implemented foundation
 
-- Responsive Matrix Panel dashboard UI.
-- Node.js/Fastify API with health endpoint.
-- Server-side Pterodactyl Application API integration for real server, node and location totals, plus server inventory.
-- Honest disconnected state: it does not fabricate sample server data.
-- PostgreSQL development service definition.
-- Pterodactyl API credentials stay in the API process environment, never in frontend code.
+- React + TypeScript + Vite dashboard and Fastify + TypeScript API.
+- Real Pterodactyl Application API reads for servers, nodes, locations, users, nests and mounts.
+- PostgreSQL schema for users, sessions, audit logs, preferences, plans, redeem codes, user plans, balances and balance transactions.
+- Initial admin bootstrap guarded by a private setup token and disabled automatically once any user exists.
+- Scrypt password hashing, opaque server-side sessions stored as SHA-256 hashes, HttpOnly/SameSite cookies, login/setup rate limits and role-based route guards.
+- Authenticated profile preferences and admin-only user/audit and Pterodactyl resource endpoints.
+- Responsive sign-in screen; API keys stay on the server.
 
 ## Requirements
 
-- Node.js 20+
-- npm 10+
-- A reachable Pterodactyl Panel and an Application API key with read access to servers, nodes and locations for overview data.
+- Node.js 22+, npm 10+, PostgreSQL 14+.
+- A Pterodactyl Panel and an Application API key with the required read permissions.
 
-## Local setup
+## Setup
 
-1. Copy `.env.example` to `.env` in the repository root.
-2. Set `PTERODACTYL_URL` to your panel base URL, for example `https://panel.example.com`.
-3. Set `PTERODACTYL_APPLICATION_KEY` in the root `.env`. Generate it in the Pterodactyl admin area and grant only the permissions needed for the endpoints you use. **Never paste this key into the browser or commit it.**
-4. Optionally start PostgreSQL: `docker compose up -d postgres`. Set a strong `POSTGRES_PASSWORD` and matching `DATABASE_URL` before exposing anything beyond local development.
-5. Install and run:
+1. Copy .env.example to .env in the repository root.
+2. Set DATABASE_URL, WEB_ORIGIN and a long random SETUP_TOKEN (at least 24 characters).
+3. Set PTERODACTYL_URL and PTERODACTYL_APPLICATION_KEY on the API server only. Never put the Application API key in frontend variables or commit it.
+4. Run npm install then npm run dev.
+5. Create the initial administrator with a POST request to /api/auth/setup using JSON fields setupToken, email, username and password (minimum 12 characters). Keep the setup token private; remove it from the environment after setup.
+6. Open http://localhost:5173 and sign in.
 
-   ```sh
-   npm install
-   npm run dev
-   ```
+## Work still remaining
 
-6. Open `http://localhost:5173`. API health is at `http://localhost:3001/api/health`.
-
-The API key is used only by the backend. The current first milestone is a read-only dashboard; user authentication and privileged server actions must be implemented before public production deployment. Do not expose this development API to the public internet as an admin service.
-
-## API endpoints
-
-- `GET /api/health` — API and configuration health (never returns credentials).
-- `GET /api/overview` — real counts from Pterodactyl Application API.
-- `GET /api/servers` — real server inventory from Pterodactyl Application API.
-
-## Build checks
-
-```sh
-npm run typecheck
-npm run build
-```
-
-## Architecture
-
-- `apps/web`: React + TypeScript + Vite UI.
-- `apps/api`: Fastify API and Pterodactyl integration.
-- `docker-compose.yml`: local PostgreSQL service.
-
-Wings is the node daemon managed by Pterodactyl. The dashboard uses Pterodactyl's supported API surfaces rather than exposing Wings directly to a browser.
+This is not production-ready and has not yet been tested against a live database or Pterodactyl instance. Console/WebSocket, power controls, file manager, backups, schedules, per-user server authorization, admin CRUD for all settings, billing/payment processing, install scripts and deployment hardening still need implementation. Do not expose this development build publicly until the remaining work is completed and tested.

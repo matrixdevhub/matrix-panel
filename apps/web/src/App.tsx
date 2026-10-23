@@ -11,7 +11,7 @@ type Overview = { servers: number; nodes: number; locations: number; connection:
 type Health = { status: string; pterodactyl: string; database: string };
 
 async function api<T>(path: string): Promise<T> {
-  const response = await fetch(`${API}${path}`, { credentials: "include" });
+  const response = await fetch(`${API}${path}`);
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.message || payload.error || `Request failed: ${response.status}`);
   return payload as T;
@@ -29,12 +29,6 @@ export default function App() {
   const [health, setHealth] = useState<Health | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [authUser, setAuthUser] = useState<{ username: string; role: string } | null>(null);
-  const [authChecking, setAuthChecking] = useState(true);
-  const [loginName, setLoginName] = useState("");
-  const [loginPassword, setLoginPassword] = useState("");
-  const [loginError, setLoginError] = useState("");
-  const [loginBusy, setLoginBusy] = useState(false);
   const [query, setQuery] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -55,22 +49,7 @@ export default function App() {
       setError(e instanceof Error ? e.message : "API unavailable");
     } finally { setLoading(false); }
   }
-  useEffect(() => {
-    void api<{ user: { username: string; role: string } }>("/api/auth/me")
-      .then(result => { setAuthUser(result.user); void refresh(); })
-      .catch(() => { setAuthUser(null); })
-      .finally(() => setAuthChecking(false));
-  }, []);
-
-  async function login(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setLoginBusy(true); setLoginError("");
-    try {
-      const response = await fetch(`${API}/api/auth/login`, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ login: loginName, password: loginPassword }) });
-      const result = await response.json(); if (!response.ok) throw new Error(result.message || result.error || "Login failed");
-      setAuthUser(result.user); await refresh();
-    } catch (e) { setLoginError(e instanceof Error ? e.message : "Login failed"); }
-    finally { setLoginBusy(false); }
-  }
+  useEffect(() => { void refresh(); }, []);
 
   const filtered = servers.filter(s => (s.name + " " + s.identifier).toLowerCase().includes(query.toLowerCase()));
   const isConnected = health?.pterodactyl === "configured" && overview?.connection === "connected";
@@ -82,16 +61,13 @@ export default function App() {
     { label: "Locations", value: overview ? String(overview.locations) : "—", detail: "Configured locations", icon: Network }
   ];
 
-  if (authChecking) return <div className="auth-shell"><div className="auth-card"><div className="brand-mark"><Command size={21}/></div><h1>Matrix Panel</h1><p>Checking your secure session…</p></div></div>;
-  if (!authUser) return <div className="auth-shell"><form className="auth-card" onSubmit={login}><div className="brand-mark"><Command size={21}/></div><div className="eyebrow"><span className="eyebrow-line"/> SECURE CONTROL CENTER</div><h1>Welcome back</h1><p>Sign in to access your Matrix Panel workspace.</p>{loginError && <div className="alert error"><ShieldCheck size={18}/><div><b>Sign in failed</b><p>{loginError}</p></div></div>}<label className="auth-label">Email or username<input autoComplete="username" required value={loginName} onChange={e => setLoginName(e.target.value)} placeholder="admin" /></label><label className="auth-label">Password<input type="password" autoComplete="current-password" required value={loginPassword} onChange={e => setLoginPassword(e.target.value)} placeholder="Your password" /></label><button className="button primary auth-submit" type="submit" disabled={loginBusy}>{loginBusy ? "Signing in…" : "Sign in"}</button><small className="auth-note">First-time setup is performed through the protected API setup endpoint by the server owner.</small></form></div>;
-
   return <div className="app-shell">
     {sidebarOpen && <button className="mobile-scrim" aria-label="Close navigation" onClick={() => setSidebarOpen(false)} />}
     <aside className={`sidebar ${sidebarOpen ? "sidebar-open" : ""}`}>
       <div className="brand"><div className="brand-mark"><Command size={21}/></div><div><b>matrix<span>.</span></b><small>CONTROL CENTER</small></div><button className="icon-btn close-menu" onClick={() => setSidebarOpen(false)} aria-label="Close menu"><X size={18}/></button></div>
       <button className="workspace"><div className="workspace-logo">M</div><div className="workspace-text"><b>Matrix Hosting</b><small>Personal workspace</small></div><ChevronDown size={15}/></button>
       <div className="nav-groups">{nav.map(group => <div className="nav-group" key={group.title}><div className="nav-label">{group.title}</div>{group.items.map(item => <button key={item.label} onClick={() => { setActive(item.label); setSidebarOpen(false); }} className={`nav-item ${active === item.label ? "selected" : ""}`}><item.icon size={17}/><span>{item.label}</span>{item.label === "Servers" && <span className="nav-count">{overview?.servers ?? "—"}</span>}</button>)}</div>)}</div>
-      <div className="sidebar-bottom"><div className="upgrade-card"><div className="upgrade-icon"><Zap size={17}/></div><b>Built for your servers</b><p>One clear view of your infrastructure.</p><button onClick={() => setActive("Settings")}>Panel settings <ArrowUpRight size={14}/></button></div><button className="nav-item"><LifeBuoy size={17}/><span>Help & support</span><ArrowUpRight className="nav-trailing" size={14}/></button><div className="profile"><div className="avatar">M</div><div className="profile-info"><b>{authUser.username}</b><small>{authUser.role === "admin" ? "Panel administrator" : "Panel user"}</small></div><Settings2 size={17} className="muted"/></div></div>
+      <div className="sidebar-bottom"><div className="upgrade-card"><div className="upgrade-icon"><Zap size={17}/></div><b>Built for your servers</b><p>One clear view of your infrastructure.</p><button onClick={() => setActive("Settings")}>Panel settings <ArrowUpRight size={14}/></button></div><button className="nav-item"><LifeBuoy size={17}/><span>Help & support</span><ArrowUpRight className="nav-trailing" size={14}/></button><div className="profile"><div className="avatar">M</div><div className="profile-info"><b>Matrix Admin</b><small>Panel administrator</small></div><Settings2 size={17} className="muted"/></div></div>
     </aside>
 
     <main className="main">
