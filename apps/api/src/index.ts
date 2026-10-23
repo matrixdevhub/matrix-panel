@@ -463,6 +463,60 @@ app.post("/api/admin/balances/:userId/adjust", { preHandler: requireAdmin }, asy
 });
 
 
+
+app.get("/api/profile", { preHandler: requireUser }, async (request) => {
+  return { user: request.sessionUser };
+});
+app.patch("/api/profile", { preHandler: requireUser }, async (request, reply) => {
+  if (!dbRequired(reply) || !originGuard(request, reply)) return;
+  const body = z.object({ username: z.string().min(3).max(32).regex(/^[a-zA-Z0-9_-]+$/).optional(), email: z.string().email().max(254).optional() }).strict().safeParse(request.body);
+  if (!body.success || !Object.keys(body.data).length) return reply.code(400).send({ error: "Invalid profile update" });
+  try {
+    const result = await pool!.query("UPDATE users SET username=COALESCE($1,username),email=COALESCE($2,email),updated_at=NOW() WHERE id=$3 RETURNING id,email,username,role",
+      [body.data.username ?? null, body.data.email?.toLowerCase() ?? null, request.sessionUser!.id]);
+    await audit(request.sessionUser!.id, "profile.update", request, "user", request.sessionUser!.id);
+    return { user: result.rows[0] };
+  } catch (error) {
+    if ((error as { code?: string }).code === "23505") return reply.code(409).send({ error: "That username or email is already in use" });
+    throw error;
+  }
+});
+app.post("/api/profile/password", { preHandler: requireUser, config: { rateLimit: { max: 5, timeWindow: "15 minutes" } } }, async (request, reply) => {
+  if (!dbRequired(reply) || !originGuard(request, reply)) return;
+  const body = z.object({ currentPassword: z.string().min(1).max(128), newPassword: z.string().min(12).max(128) }).safeParse(request.body);
+  if (!body.success) return reply.code(400).send({ error: "New password must be at least 12 characters" });
+  const result = await pool!.query("SELECT password_hash FROM users WHERE id=$1", [request.sessionUser!.id]);
+  if (!result.rowCount || !(await verifyPassword(body.data.currentPassword, result.rows[0].password_hash))) return reply.code(401).send({ error: "Current password is incorrect" });
+  await pool!.query("UPDATE users SET password_hash=$1,updated_at=NOW() WHERE id=$2", [await hashPassword(body.data.newPassword), request.sessionUser!.id]);
+  const currentToken = request.cookies?.[COOKIE];
+  if (currentToken) await pool!.query("DELETE FROM sessions WHERE user_id=$1 AND token_hash<>$2", [request.sessionUser!.id, hashToken(currentToken)]);
+  await audit(request.sessionUser!.id, "profile.password.change", request, "user", request.sessionUser!.id);
+  return { ok: true };
+});
+app.post("/api/admin/users", { preHandler: requireAdmin }, async (request, reply) => {
+  if (!dbRequired(reply) || !originGuard(request, reply)) return;
+  const body = z.object({
+    email: z.string().email().max(254), username: z.string().min(3).max(32).regex(/^[a-zA-Z0-9_-]+$/),
+    password: z.string().min(12).max(128), role: z.enum(["admin","user"]).default("user")
+  }).safeParse(request.body);
+  if (!body.success) return reply.code(400).send({ error: "Invalid user data", details: body.error.flatten().fieldErrors });
+  const client = await pool!.connect();
+  try {
+    await client.query("BEGIN");
+    const created = await client.query("INSERT INTO users(email,username,password_hash,role) VALUES($1,$2,$3,$4) RETURNING id,email,username,role,is_active,created_at",
+      [body.data.email.toLowerCase(), body.data.username, await hashPassword(body.data.password), body.data.role]);
+    await client.query("INSERT INTO balances(user_id) VALUES($1)", [created.rows[0].id]);
+    await client.query("INSERT INTO user_preferences(user_id) VALUES($1)", [created.rows[0].id]);
+    await client.query("COMMIT");
+    await audit(request.sessionUser!.id, "users.create", request, "user", String(created.rows[0].id));
+    return reply.code(201).send({ data: created.rows[0] });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    if ((error as { code?: string }).code === "23505") return reply.code(409).send({ error: "That username or email is already in use" });
+    throw error;
+  } finally { client.release(); }
+});
+
 app.patch("/api/admin/users/:id", { preHandler: requireAdmin }, async (request, reply) => {
   if (!dbRequired(reply) || !originGuard(request, reply)) return;
   const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(request.params);
