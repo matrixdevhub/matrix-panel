@@ -303,32 +303,75 @@ export default function App() {
       serverTab === "Minecraft" ? <div className="server-resource-view minecraft-manager"><div className="file-toolbar"><div><b>Minecraft Player Manager</b><p className="subtitle">Run player management commands on this server.</p></div></div><form className="console-input-row" onSubmit={event => { event.preventDefault(); const name = playerName.trim(); if (!/^[A-Za-z0-9_]{3,16}$/.test(name)) { setPlayerFeedback("Enter a valid Minecraft username (3–16 letters, numbers, or underscores)."); return; } if (consoleSocket.current?.readyState !== WebSocket.OPEN) { setPlayerFeedback("Console is not connected. Switch to Console and wait for it to connect."); return; } consoleSocket.current.send(JSON.stringify({event:"send command",args:[playerAction + " " + name]})); setPlayerFeedback("Command sent: " + playerAction + " " + name); }}><select value={playerAction} onChange={event=>setPlayerAction(event.target.value)} aria-label="Player action"><option value="whitelist add">Whitelist player</option><option value="whitelist remove">Remove from whitelist</option><option value="op">Give operator</option><option value="deop">Remove operator</option><option value="ban">Ban player</option><option value="pardon">Unban player</option><option value="kick">Kick player</option></select><input value={playerName} onChange={event=>setPlayerName(event.target.value)} placeholder="Minecraft username" minLength={3} maxLength={16} required/><button className="button primary" type="submit">Run command</button></form>{playerFeedback && <p className="credential-help" role="status">{playerFeedback}</p>}<div className="alert setup"><div className="setup-icon"><ShieldCheck size={18}/></div><div><b>Server console permissions apply</b><p>Commands run as the server console. Only use operator, ban, and whitelist actions when you have permission to manage this server.</p></div></div><div className="file-toolbar"><b>Quick commands</b></div><div className="minecraft-quick-actions">{[{label:"List online players",command:"list"},{label:"Show whitelist",command:"whitelist list"},{label:"Reload whitelist",command:"whitelist reload"}].map(item=><button key={item.command} className="button secondary" onClick={()=>{if(consoleSocket.current?.readyState===WebSocket.OPEN){consoleSocket.current.send(JSON.stringify({event:"send command",args:[item.command]}));setPlayerFeedback("Command sent: "+item.command);}else setPlayerFeedback("Console is not connected. Switch to Console and wait for it to connect.");}}>{item.label}</button>)}</div></div> :
       serverTab === "Plugins" ? <div className="server-resource-view plugin-manager">
         <div className="file-toolbar">
-          <div><b>Plugin Manager</b><p className="subtitle">View JAR files in this server's /plugins directory.</p></div>
-          <button className="button secondary" disabled={serverResourceLoading} onClick={async () => {
-            setServerResourceLoading(true);
-            setServerResourceError("");
-            try {
-              const response = await fetch(`${API}/api/profile/servers/${encodeURIComponent(selectedServer.identifier)}/files?directory=${encodeURIComponent("/plugins")}`, { credentials: "include" });
-              const payload = await response.json();
-              if (!response.ok) throw new Error(payload.message || payload.error || "Could not load plugins directory");
-              setFileEntries(Array.isArray(payload.data) ? payload.data.map((entry: any) => entry.attributes ?? entry) : []);
-            } catch (error) {
-              setServerResourceError(error instanceof Error ? error.message : "Could not load plugins");
-            } finally {
-              setServerResourceLoading(false);
-            }
-          }}><RefreshCw size={14}/> Refresh</button>
+          <div><b>Plugin Manager PRO</b><p className="subtitle">Upload, search, and safely remove JAR files in /plugins.</p></div>
+          <div className="header-buttons">
+            <label className="button primary" style={{ cursor: pluginBusy ? "wait" : "pointer" }}>
+              {pluginBusy ? "Working…" : "Upload .jar"}
+              <input type="file" accept=".jar,application/java-archive" disabled={pluginBusy || !credentialConnected} style={{ display: "none" }} onChange={async event => {
+                const file = event.currentTarget.files?.[0];
+                event.currentTarget.value = "";
+                if (!file) return;
+                setPluginFeedback("");
+                if (!file.name.toLowerCase().endsWith(".jar")) { setPluginFeedback("Choose a .jar plugin file."); return; }
+                if (file.size > 100 * 1024 * 1024) { setPluginFeedback("Plugin file is too large (maximum 100 MB)."); return; }
+                setPluginBusy(true);
+                try {
+                  const urlResponse = await fetch(`${API}/api/profile/servers/${encodeURIComponent(selectedServer.identifier)}/plugins/upload-url`, { method: "POST", credentials: "include" });
+                  const urlPayload = await urlResponse.json();
+                  if (!urlResponse.ok) throw new Error(urlPayload.message || urlPayload.error || "Could not prepare plugin upload");
+                  const uploadUrl = urlPayload?.attributes?.url || urlPayload?.url || urlPayload?.data?.attributes?.url;
+                  if (typeof uploadUrl !== "string" || !/^https:\/\//i.test(uploadUrl)) throw new Error("Pterodactyl returned an invalid upload URL.");
+                  const form = new FormData();
+                  form.append("files", file, file.name);
+                  const uploadResponse = await fetch(uploadUrl, { method: "POST", body: form });
+                  if (!uploadResponse.ok) throw new Error("Upload failed (HTTP " + uploadResponse.status + "). Check server file permissions.");
+                  setPluginFeedback("Uploaded " + file.name + ". Restart the server if required by the plugin.");
+                  const listResponse = await fetch(`${API}/api/profile/servers/${encodeURIComponent(selectedServer.identifier)}/files?directory=${encodeURIComponent("/plugins")}`, { credentials: "include" });
+                  const listPayload = await listResponse.json();
+                  if (!listResponse.ok) throw new Error(listPayload.message || listPayload.error || "Uploaded, but could not refresh plugin list");
+                  setFileEntries(Array.isArray(listPayload.data) ? listPayload.data.map((entry: any) => entry.attributes ?? entry) : []);
+                } catch (error) { setPluginFeedback(error instanceof Error ? error.message : "Plugin upload failed."); }
+                finally { setPluginBusy(false); }
+              }}/>
+            </label>
+            <button className="button secondary" disabled={serverResourceLoading || pluginBusy} onClick={async () => {
+              setServerResourceLoading(true); setServerResourceError("");
+              try {
+                const response = await fetch(`${API}/api/profile/servers/${encodeURIComponent(selectedServer.identifier)}/files?directory=${encodeURIComponent("/plugins")}`, { credentials: "include" });
+                const payload = await response.json();
+                if (!response.ok) throw new Error(payload.message || payload.error || "Could not load plugins directory");
+                setFileEntries(Array.isArray(payload.data) ? payload.data.map((entry: any) => entry.attributes ?? entry) : []);
+              } catch (error) { setServerResourceError(error instanceof Error ? error.message : "Could not load plugins"); }
+              finally { setServerResourceLoading(false); }
+            }}><RefreshCw size={14}/> Refresh</button>
+          </div>
         </div>
         <label className="plugin-search">Search installed plugins<input value={pluginQuery} onChange={event => setPluginQuery(event.target.value)} placeholder="Search .jar files…"/></label>
-        {serverResourceError && <p className="credential-error">{serverResourceError}</p>}
+        {serverResourceError && <p className="credential-error" role="alert">{serverResourceError}</p>}
+        {pluginFeedback && <p className="credential-help" role="status">{pluginFeedback}</p>}
         {serverResourceLoading ? <p>Loading plugin directory…</p> : <div className="plugin-list">
-          {fileEntries.filter(entry => Boolean(entry.is_file ?? entry.isFile ?? true) && String(entry.name ?? "").toLowerCase().endsWith(".jar") && String(entry.name ?? "").toLowerCase().includes(pluginQuery.toLowerCase())).map((entry, index) => <div className="plugin-row" key={String(entry.name ?? "plugin") + index}>
-            <span className="plugin-file-icon">JAR</span>
-            <div className="plugin-details"><b>{String(entry.name ?? "Unnamed plugin")}</b><small>{entry.size != null ? (Number(entry.size) / 1024 / 1024).toFixed(2) + " MB" : "Plugin archive"} · /plugins</small></div>
-          </div>)}
+          {fileEntries.filter(entry => Boolean(entry.is_file ?? entry.isFile ?? true) && String(entry.name ?? "").toLowerCase().endsWith(".jar") && String(entry.name ?? "").toLowerCase().includes(pluginQuery.toLowerCase())).map((entry, index) => {
+            const pluginName = String(entry.name ?? "Unnamed plugin");
+            return <div className="plugin-row" key={pluginName + index}>
+              <span className="plugin-file-icon">JAR</span>
+              <div className="plugin-details"><b>{pluginName}</b><small>{entry.size != null ? (Number(entry.size) / 1024 / 1024).toFixed(2) + " MB" : "Plugin archive"} · /plugins</small></div>
+              <button className="button secondary" disabled={pluginBusy || !credentialConnected} onClick={async () => {
+                if (!window.confirm("Delete " + pluginName + " from /plugins? This cannot be undone.")) return;
+                setPluginBusy(true); setPluginFeedback(""); setServerResourceError("");
+                try {
+                  const response = await fetch(`${API}/api/profile/servers/${encodeURIComponent(selectedServer.identifier)}/files`, { method: "DELETE", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ root: "/plugins", files: [pluginName] }) });
+                  const payload = await response.json().catch(() => ({}));
+                  if (!response.ok) throw new Error(payload.message || payload.error || "Could not delete plugin");
+                  setFileEntries(previous => previous.filter(item => String(item.name ?? "") !== pluginName));
+                  setPluginFeedback("Deleted " + pluginName + ".");
+                } catch (error) { setServerResourceError(error instanceof Error ? error.message : "Could not delete plugin"); }
+                finally { setPluginBusy(false); }
+              }}>Delete</button>
+            </div>;
+          })}
           {fileEntries.filter(entry => Boolean(entry.is_file ?? entry.isFile ?? true) && String(entry.name ?? "").toLowerCase().endsWith(".jar") && String(entry.name ?? "").toLowerCase().includes(pluginQuery.toLowerCase())).length === 0 && <div className="plugin-empty"><b>{pluginQuery ? "No matching JAR files" : "No plugin JAR files found"}</b><p>{pluginQuery ? "Try another search term." : "Check that this server uses a plugin-compatible Minecraft server, then refresh."}</p></div>}
         </div>}
-        <div className="alert setup"><div className="setup-icon"><ShieldCheck size={18}/></div><div><b>Plugin safety</b><p>Only install trusted plugins. Keep a backup before making server changes, and restart the server after plugin updates.</p></div></div>
+        <div className="alert setup"><div className="setup-icon"><ShieldCheck size={18}/></div><div><b>Plugin safety</b><p>Only install plugins from trusted sources. Keep a backup before changes, verify compatibility with your Minecraft server version, and restart the server when required.</p></div></div>
       </div> :
       serverTab === "Files" ? <div className="file-manager"><div className="file-toolbar"><button className="button secondary" disabled={fileDirectory === "/"} onClick={() => setFileDirectory(fileDirectory.split("/").filter(Boolean).slice(0,-1).length ? "/" + fileDirectory.split("/").filter(Boolean).slice(0,-1).join("/") : "/")}>Up</button><span>{fileDirectory}</span></div>{serverResourceError && <p className="credential-error">{serverResourceError}</p>}{filePath ? <><div className="file-toolbar"><b>{filePath}</b><button className="button secondary" onClick={() => { setFilePath(""); setFileDirty(false); }}>Back</button><button className="button primary" disabled={!fileDirty} onClick={async () => { const response = await fetch(`${API}/api/profile/servers/${encodeURIComponent(selectedServer.identifier)}/files/contents?file=${encodeURIComponent(filePath)}`, {method:"PUT",credentials:"include",headers:{"Content-Type":"application/json"},body:JSON.stringify({content:fileContent})}); if (!response.ok) { const p = await response.json(); setServerResourceError(p.message || p.error || "Save failed"); } else setFileDirty(false); }}>Save</button></div><textarea className="file-editor" value={fileContent} onChange={event => { setFileContent(event.target.value); setFileDirty(true); }} spellCheck={false}/></> : <div className="file-list">{serverResourceLoading ? <p>Loading files…</p> : fileEntries.map((entry,index) => { const name = String(entry.name ?? "Unnamed"); const isFile = Boolean(entry.is_file ?? entry.isFile ?? true); return <button key={name + index} onClick={async () => { const path = (fileDirectory === "/" ? "" : fileDirectory) + "/" + name; if (!isFile) { setFileDirectory(path); return; } setServerResourceError(""); const response = await fetch(`${API}/api/profile/servers/${encodeURIComponent(selectedServer.identifier)}/files/contents?file=${encodeURIComponent(path)}`, {credentials:"include"}); const content = await response.text(); if (!response.ok) { setServerResourceError(content || "Could not read file"); return; } setFilePath(path); setFileContent(content); setFileDirty(false); }}>{isFile ? "▤" : "▣"} <b>{name}</b><small>{isFile ? String(entry.size ?? "file") : "folder"}</small></button>; })}</div>}</div> :
       <div className="server-resource-view">{serverTab === "Backups" && <div className="file-toolbar"><span>Create a server backup</span><button className="button primary" onClick={async () => { const response = await fetch(`${API}/api/profile/servers/${encodeURIComponent(selectedServer.identifier)}/backups`, {method:"POST",credentials:"include",headers:{"Content-Type":"application/json"},body:JSON.stringify({})}); if (!response.ok) { const p = await response.json(); setServerResourceError(p.message || p.error || "Backup creation failed"); } else setServerResourceError("Backup request submitted."); }}><Plus size={14}/> Create backup</button></div>}{serverResourceError && <p className="credential-error">{serverResourceError}</p>}{serverResourceLoading ? <p>Loading {serverTab.toLowerCase()}…</p> : <pre>{JSON.stringify(serverResource,null,2)}</pre>}</div>}
