@@ -15,7 +15,15 @@ NODE_MAJOR="$(node -p 'Number(process.versions.node.split(".")[0])')"
 command -v npm >/dev/null || fail "npm is required."
 command -v openssl >/dev/null || fail "openssl is required."
 [[ -f .env.example ]] || fail "Missing .env.example."
-[[ -f package-lock.json ]] || fail "Missing package-lock.json; refusing non-reproducible install. Commit the npm lockfile first."
+# Prefer reproducible installs. This repository currently has no committed npm lockfile,
+# so fall back to npm install rather than making the guided installer unusable.
+if [[ -f package-lock.json ]]; then
+  INSTALL_COMMAND="ci"
+else
+  INSTALL_COMMAND="install"
+  echo "WARNING: package-lock.json is missing; npm install may resolve newer compatible dependencies."
+  echo "For reproducible production deploys, commit a reviewed package-lock.json and rerun."
+fi
 command -v sudo >/dev/null || fail "sudo is required for optional system configuration. Install it or configure system files manually."
 
 echo "Matrix Panel guided installer (Debian 12 / existing Pterodactyl-safe)"
@@ -67,8 +75,13 @@ mv "$TMP_ENV" .env
 unset PTERODACTYL_APPLICATION_KEY DATABASE_URL
 trap - EXIT
 
-note "Installing locked dependencies"
-npm ci
+if [[ "$INSTALL_COMMAND" == "ci" ]]; then
+  note "Installing locked dependencies"
+  npm ci
+else
+  note "Installing dependencies (no committed lockfile; not fully reproducible)"
+  npm install
+fi
 note "Type-checking"
 npm run typecheck
 note "Building frontend and API"
@@ -112,6 +125,7 @@ if [[ "$INSTALL_SYSTEM" =~ ^[Yy]$ ]]; then
   TMP_UNIT="$(mktemp)"
   trap 'rm -f "$TMP_NGINX" "$TMP_UNIT"; unset SETUP_TOKEN' EXIT
   cat > "$TMP_NGINX" <<EOF
+# This file is included from Nginx's http context, so map must be outside server.
 map \$http_upgrade \$connection_upgrade {
     default upgrade;
     '' close;
