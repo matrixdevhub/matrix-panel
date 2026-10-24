@@ -14,6 +14,7 @@ import { clientRequest, decryptCredential, encryptCredential } from "./pterodact
 import { validateConsoleWebSocketUrl } from "./console-websocket-security.js";
 import { normalizeClientServer, normalizePowerSignal, type ClientServerRecord } from "./pterodactyl-server-data.js";
 import { InvalidServerPathError, normalizeServerPath } from "./server-path-security.js";
+import { normalizeConsoleCommandMessage } from "./console-message-security.js";
 
 const app = Fastify({ logger: true, bodyLimit: 1_048_576, trustProxy: config.NODE_ENV === "production" });
 await app.register(cors, { origin: config.WEB_ORIGIN, credentials: true });
@@ -401,7 +402,12 @@ app.get("/api/profile/servers/:identifier/console", { websocket: true, preHandle
       remote.on("error", () => closeBoth(1011, Buffer.from("Pterodactyl console connection failed")));
       browserSocket.on("message", data => {
         if (remote.readyState !== WebSocket.OPEN || !authenticated) return;
-        remote.send(data.toString());
+        const safeMessage = normalizeConsoleCommandMessage(data.toString());
+        if (!safeMessage) {
+          closeBoth(1008, Buffer.from("Unsupported or invalid console command"));
+          return;
+        }
+        remote.send(safeMessage);
       });
       browserSocket.on("close", () => { if (remote.readyState === WebSocket.OPEN) remote.close(); });
       browserSocket.on("error", () => closeBoth());
