@@ -79,3 +79,17 @@ Verify `/api/live` and `/api/ready` locally, sign in over the public HTTPS hostn
 ## 6. Required staging tests before production
 
 CI type-checks and builds both workspaces; it does not run end-to-end tests against PostgreSQL or Pterodactyl. Test authentication/session handling, role permissions, Pterodactyl resource reads, power controls, console/WebSocket, file operations, backups, schedules and error handling. Review admin CRUD and billing flows and perform a security review. Configure off-host database backups, log/disk monitoring and recovery procedures before production use.
+
+## 5. Post-deployment API smoke test
+
+After starting the API and configuring the reverse proxy, run the read-only health checks from the VPS or another trusted host:
+
+```bash
+bash scripts/smoke-test.sh http://127.0.0.1:3001
+```
+
+The script checks `/api/live`, `/api/health`, and `/api/ready`. It validates response JSON and ensures the HTTP status agrees with the reported health/readiness state. An unavailable or unconfigured database is reported as a dependency failure rather than mistaken for readiness.
+
+The script sends only GET requests and does not log in, change settings, or start/stop/restart a game server. Run it against the local loopback API where possible; do not use it as a substitute for testing through the public HTTPS hostname.
+
+A passing smoke test only confirms these health endpoints respond coherently. Before production, separately test authentication/session revocation, user/admin permissions, database migrations and recovery, Pterodactyl reads, power controls, console WebSocket authentication, file operations, and backups in a disposable staging environment.
