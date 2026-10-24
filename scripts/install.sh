@@ -86,12 +86,20 @@ echo
 read -r -p "Install a separate Matrix Panel systemd unit and Nginx site now? [y/N] " INSTALL_SYSTEM
 if [[ "$INSTALL_SYSTEM" =~ ^[Yy]$ ]]; then
   command -v nginx >/dev/null || fail "Nginx is not installed. Install it separately; existing Pterodactyl config was not touched."
+  command -v setfacl >/dev/null || fail "setfacl is required for safe service permissions. Install with: sudo apt-get install acl"
   sudo -v
   SERVICE_USER="matrix-panel"
   if ! id "$SERVICE_USER" >/dev/null 2>&1; then
     sudo useradd --system --home-dir "$ROOT" --shell /usr/sbin/nologin "$SERVICE_USER"
   fi
-  sudo chown -R "$SERVICE_USER":"$SERVICE_USER" "$ROOT"
+  # Keep the checkout owned by the deploying user so future updates remain possible.
+  # Grant the service account read access without recursively changing repository ownership.
+  sudo setfacl -R -m "u:$SERVICE_USER:rX" "$ROOT" 2>/dev/null || {
+    echo "setfacl is unavailable; installing ACL support is required for safe read access."
+    echo "Run: sudo apt-get install acl, then rerun this installer."
+    exit 1
+  }
+  sudo setfacl -m "u:$SERVICE_USER:rw" "$ROOT/.env"
   sudo chmod 600 "$ROOT/.env"
 
   NGINX_AVAILABLE="/etc/nginx/sites-available/matrix-panel"
