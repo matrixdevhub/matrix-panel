@@ -62,6 +62,7 @@ export default function App() {
   const [metricsLoading, setMetricsLoading] = useState(false);
   const [metricsError, setMetricsError] = useState("");
   const [metricsRefresh, setMetricsRefresh] = useState(0);
+  const [monitoringHealth, setMonitoringHealth] = useState<{ apiAlive: boolean | null; database: string; pterodactyl: string; checkedAt: string } | null>(null);
   const [auditAction, setAuditAction] = useState("");
   const [auditActor, setAuditActor] = useState("");
   const [auditTargetType, setAuditTargetType] = useState("");
@@ -218,6 +219,27 @@ export default function App() {
     let cancelled = false;
     const loadMetrics = async () => {
       setMetricsLoading(true);
+      const healthCheck = async () => {
+        const [liveResult, healthResult] = await Promise.allSettled([
+          fetch(`${API}/api/live`, { credentials: "include" }),
+          fetch(`${API}/api/health`, { credentials: "include" })
+        ]);
+        let apiAlive = false;
+        let database = "unavailable";
+        let pterodactyl = "unknown";
+        if (liveResult.status === "fulfilled") {
+          try { const payload = await liveResult.value.json(); apiAlive = liveResult.value.ok && payload.status === "alive"; } catch { apiAlive = false; }
+        }
+        if (healthResult.status === "fulfilled") {
+          try {
+            const payload = await healthResult.value.json();
+            database = typeof payload.database === "string" ? payload.database : "unknown";
+            pterodactyl = typeof payload.pterodactyl === "string" ? payload.pterodactyl : "unknown";
+          } catch { database = "unavailable"; }
+        }
+        if (!cancelled) setMonitoringHealth({ apiAlive, database, pterodactyl, checkedAt: new Date().toISOString() });
+      };
+      await healthCheck();
       try { const result = await api<ApiMetrics>("/api/admin/metrics"); if (!cancelled) { setApiMetrics(result); setMetricsError(""); } }
       catch (error) { if (!cancelled) setMetricsError(error instanceof Error ? error.message : "Unable to load API metrics"); }
       finally { if (!cancelled) setMetricsLoading(false); }
@@ -301,6 +323,11 @@ export default function App() {
         {active !== "Overview" && active !== "Servers" ? <section className="resource-view"><section className="welcome-row"><div><div className="eyebrow"><span className="eyebrow-line"/> ADMIN WORKSPACE</div><h1>{active}</h1><p className="subtitle">Live records from the Matrix database or connected Pterodactyl API.</p></div><button className="button secondary" onClick={() => setActive("Overview")}><LayoutDashboard size={15}/> Overview</button></section>{resourceError && <div className="alert error"><ShieldCheck size={18}/><div><b>Could not load {active}</b><p>{resourceError}</p></div></div>}{active === "Monitoring" ? <div className="monitoring-page">
   <div className="monitoring-toolbar"><div><span className="monitoring-live-dot"/><span>{metricsLoading && !apiMetrics ? "Connecting to API…" : "Auto-refreshes every 10 seconds"}</span></div><button className="button secondary" onClick={() => setMetricsRefresh(value => value + 1)} disabled={metricsLoading}><RefreshCw size={15} className={metricsLoading ? "spin" : ""}/> Refresh now</button></div>
   {metricsError && <div className="alert error"><ShieldCheck size={18}/><div><b>Could not load API metrics</b><p>{metricsError}</p><small>Make sure the API is running and your admin session is valid.</small></div></div>}
+  <section className="monitoring-health-grid" aria-label="Service connection status">
+    <article className="panel-card monitoring-health-card"><div className="monitoring-health-heading"><span className="monitoring-health-symbol"><Activity size={17}/></span><b>API service</b></div><span className={`monitoring-status-pill ${monitoringHealth?.apiAlive ? "is-good" : monitoringHealth?.apiAlive === false ? "is-bad" : "is-unknown"}`}><span/>{monitoringHealth?.apiAlive ? "Online" : monitoringHealth?.apiAlive === false ? "Offline / unreachable" : "Checking…"}</span><small>Live endpoint response</small></article>
+    <article className="panel-card monitoring-health-card"><div className="monitoring-health-heading"><span className="monitoring-health-symbol"><Database size={17}/></span><b>Database</b></div><span className={`monitoring-status-pill ${monitoringHealth?.database === "connected" ? "is-good" : monitoringHealth?.database === "unavailable" ? "is-bad" : "is-unknown"}`}><span/>{monitoringHealth?.database === "connected" ? "Connected" : monitoringHealth?.database === "not_configured" ? "Not configured" : monitoringHealth?.database === "unavailable" ? "Unavailable" : "Checking…"}</span><small>Health-check query</small></article>
+    <article className="panel-card monitoring-health-card"><div className="monitoring-health-heading"><span className="monitoring-health-symbol"><Network size={17}/></span><b>Pterodactyl</b></div><span className={`monitoring-status-pill ${monitoringHealth?.pterodactyl === "configured" ? "is-good" : monitoringHealth?.pterodactyl === "not_configured" ? "is-bad" : "is-unknown"}`}><span/>{monitoringHealth?.pterodactyl === "configured" ? "Configured" : monitoringHealth?.pterodactyl === "not_configured" ? "Not configured" : "Checking…"}</span><small>Configuration only — not a live connection test</small></article>
+  </section>
   <div className="monitoring-stat-grid">
     <article className="monitoring-stat"><div className="monitoring-stat-icon"><Activity size={18}/></div><span className="monitoring-label">API UPTIME</span><strong>{apiMetrics ? formatUptime(apiMetrics.uptimeSeconds) : "—"}</strong><small>Since this API process started</small></article>
     <article className="monitoring-stat"><div className="monitoring-stat-icon"><Network size={18}/></div><span className="monitoring-label">TOTAL REQUESTS</span><strong>{apiMetrics ? apiMetrics.requests.total.toLocaleString() : "—"}</strong><small>Requests counted by this process</small></article>
