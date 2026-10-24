@@ -188,8 +188,30 @@ export default function App() {
     const socket = new WebSocket(socketUrl);
     consoleSocket.current = socket;
     setConsoleOutput([]); setConsoleStatus("Connecting to server console…");
-    socket.onopen = () => setConsoleStatus("Console connected");
-    socket.onmessage = event => setConsoleOutput(previous => [...previous, String(event.data)].slice(-400));
+    socket.onopen = () => setConsoleStatus("WebSocket connected; authenticating with Pterodactyl…");
+    socket.onmessage = event => {
+      const raw = String(event.data);
+      try {
+        const message = JSON.parse(raw) as { event?: unknown; args?: unknown[] };
+        if (message.event === "auth success") {
+          setConsoleStatus("Console authenticated");
+          return;
+        }
+        if (message.event === "auth error") {
+          setConsoleStatus("Pterodactyl console authentication failed");
+          setConsoleOutput(previous => [...previous, raw].slice(-400));
+          return;
+        }
+        if (message.event === "console output" && Array.isArray(message.args)) {
+          const lines = message.args.map(value => String(value));
+          setConsoleOutput(previous => [...previous, ...lines].slice(-400));
+          return;
+        }
+      } catch {
+        // Keep raw upstream text visible when it is not a JSON event.
+      }
+      setConsoleOutput(previous => [...previous, raw].slice(-400));
+    };
     socket.onerror = () => setConsoleStatus("Console connection error");
     socket.onclose = event => setConsoleStatus(event.reason || "Console disconnected");
     return () => { socket.close(); if (consoleSocket.current === socket) consoleSocket.current = null; };
