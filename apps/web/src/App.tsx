@@ -187,6 +187,25 @@ export default function App() {
   }, [authUser]);
 
   useEffect(() => {
+    if (!authUser) return;
+    let cancelled = false;
+    void api<{ theme?: string; notification_sound?: boolean; about?: string }>("/api/profile/preferences")
+      .then(preferences => {
+        if (cancelled) return;
+        if (preferences.theme) setProfileTheme(preferences.theme);
+        if (typeof preferences.notification_sound === "boolean") setProfileSound(preferences.notification_sound);
+        if (typeof preferences.about === "string") setProfileAbout(preferences.about);
+      })
+      .catch(() => { /* Preferences remain editable if the database is temporarily unavailable. */ });
+    return () => { cancelled = true; };
+  }, [authUser]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = profileTheme;
+    return () => { delete document.documentElement.dataset.theme; };
+  }, [profileTheme]);
+
+  useEffect(() => {
     if (active !== "Profile" || !authUser) return;
     let cancelled = false;
     setSessionsBusy(true);
