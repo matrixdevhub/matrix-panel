@@ -47,4 +47,5 @@ jobs:
             deploy/systemd/matrix-panel-api.service.example
             .env.example
             scripts/install.sh
+            scripts/smoke-test.sh
             docs/DEPLOYMENT.md
