@@ -59,3 +59,16 @@
 .monitoring-status-pill.is-unknown>span{background:#fbbf24}
 .monitoring-health-card>small{display:block;color:var(--muted);font-size:11px;line-height:1.5}
 @media(max-width:850px){.monitoring-health-grid{grid-template-columns:1fr}}
+
+
+.monitoring-overall-status{display:flex;align-items:center;gap:13px;padding:16px 18px;margin:0 0 16px;border:1px solid var(--border);border-radius:14px;background:var(--panel);min-width:0}
+.monitoring-overall-icon{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;flex:none}
+.monitoring-overall-status.status-healthy{border-color:rgba(75,214,160,.25)}
+.monitoring-overall-status.status-healthy .monitoring-overall-icon{background:rgba(75,214,160,.12);color:var(--green)}
+.monitoring-overall-status.status-attention{border-color:rgba(251,191,36,.3)}
+.monitoring-overall-status.status-attention .monitoring-overall-icon{background:rgba(251,191,36,.12);color:#fbbf24}
+.monitoring-overall-status>div{min-width:0;flex:1}
+.monitoring-overall-status>div b{font-size:13px}
+.monitoring-overall-status>div p{margin:4px 0 0;color:var(--muted);font-size:12px;line-height:1.5}
+.monitoring-overall-status>small{color:var(--muted);font-size:11px;white-space:nowrap}
+@media(max-width:620px){.monitoring-overall-status{align-items:flex-start;flex-wrap:wrap}.monitoring-overall-status>small{width:100%;padding-left:51px;white-space:normal}}
