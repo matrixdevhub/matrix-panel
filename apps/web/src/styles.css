@@ -67,6 +67,8 @@
 .monitoring-overall-status.status-healthy .monitoring-overall-icon{background:rgba(75,214,160,.12);color:var(--green)}
 .monitoring-overall-status.status-attention{border-color:rgba(251,191,36,.3)}
 .monitoring-overall-status.status-attention .monitoring-overall-icon{background:rgba(251,191,36,.12);color:#fbbf24}
+.monitoring-overall-status.status-critical{border-color:rgba(251,113,133,.4)}
+.monitoring-overall-status.status-critical .monitoring-overall-icon{background:rgba(251,113,133,.12);color:#fb7185}
 .monitoring-overall-status>div{min-width:0;flex:1}
 .monitoring-overall-status>div b{font-size:13px}
 .monitoring-overall-status>div p{margin:4px 0 0;color:var(--muted);font-size:12px;line-height:1.5}
