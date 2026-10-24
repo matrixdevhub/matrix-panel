@@ -27,3 +27,20 @@ jobs:
         run: npm run typecheck
       - name: Build API and web
         run: npm run build
+      - name: Upload production build
+        uses: actions/upload-artifact@v4
+        with:
+          name: matrix-panel-build
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            apps/api/dist/
+            apps/web/dist/
+            apps/api/package.json
+            apps/web/package.json
+            package.json
+            deploy/nginx/matrix-panel.conf.example
+            deploy/systemd/matrix-panel-api.service.example
+            .env.example
+            scripts/install.sh
+            docs/DEPLOYMENT.md
