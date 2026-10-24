@@ -797,4 +797,22 @@ app.setErrorHandler((error, request, reply) => {
 });
 try { await migrate(); await app.listen({ host: config.API_HOST, port: config.API_PORT }); }
 catch (error) { app.log.error(error); process.exit(1); }
-for (const signal of ["SIGINT","SIGTERM"] as const) process.on(signal, async () => { await app.close(); await pool?.end(); process.exit(0); });
+let shuttingDown = false;
+async function shutdown(signal: NodeJS.Signals) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  app.log.info({ signal }, "Graceful shutdown started");
+  try {
+    await app.close();
+    await pool?.end();
+    app.log.info({ signal }, "Graceful shutdown completed");
+  } catch (error) {
+    process.exitCode = 1;
+    app.log.error({ err: error, signal }, "Graceful shutdown failed");
+  }
+}
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.on(signal, () => {
+    void shutdown(signal);
+  });
+}
