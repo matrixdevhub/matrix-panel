@@ -11,6 +11,7 @@ import { authenticate, requireAdmin, requireUser } from "./auth.js";
 import { hashPassword, hashToken, randomToken, verifyPassword } from "./security.js";
 import { getPanelSummary, getServers, PterodactylError, applicationRequest } from "./pterodactyl.js";
 import { clientRequest, decryptCredential, encryptCredential } from "./pterodactyl-client.js";
+import { validateConsoleWebSocketUrl } from "./console-websocket-security.js";
 
 const app = Fastify({ logger: true, bodyLimit: 1_048_576, trustProxy: config.NODE_ENV === "production" });
 await app.register(cors, { origin: config.WEB_ORIGIN, credentials: true });
@@ -338,10 +339,10 @@ app.get("/api/profile/servers/:identifier/console", { websocket: true, preHandle
     if (!token) { browserSocket.close(1008, "Connect your Pterodactyl Client API key first"); return; }
     try {
       const credentials = await clientRequest<{ data: { socket: string; token: string } }>(token, "/servers/" + params.data.identifier + "/websocket");
-      const socketUrl = new URL(credentials.data.socket);
-      const secureSocket = socketUrl.protocol === "wss:";
-      const developmentSocket = config.NODE_ENV !== "production" && socketUrl.protocol === "ws:";
-      if ((!secureSocket && !developmentSocket) || socketUrl.username || socketUrl.password) {
+      let socketUrl: URL;
+      try {
+        socketUrl = validateConsoleWebSocketUrl(credentials.data.socket, config.NODE_ENV);
+      } catch {
         browserSocket.close(1008, "Invalid upstream console URL");
         return;
       }
