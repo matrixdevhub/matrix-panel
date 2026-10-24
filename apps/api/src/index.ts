@@ -162,6 +162,10 @@ app.post("/api/auth/setup", { config: { rateLimit: { max: 3, timeWindow: "1 hour
 
 app.post("/api/auth/register", { config: { rateLimit: { max: 5, timeWindow: "1 hour" } } }, async (request, reply) => {
   if (!dbRequired(reply) || !originGuard(request, reply)) return;
+  const registrationSetting = await pool!.query("SELECT setting_value FROM panel_settings WHERE setting_key='registration.enabled'");
+  if (registrationSetting.rowCount && registrationSetting.rows[0].setting_value === false) {
+    return reply.code(403).send({ error: "Registration is disabled by the administrator" });
+  }
   const parsed = z.object({
     email: z.string().trim().email().max(254),
     username: z.string().trim().min(3).max(32).regex(/^[a-zA-Z0-9_-]+$/),
