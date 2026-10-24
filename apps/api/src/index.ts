@@ -37,6 +37,13 @@ async function audit(userId: string | null, action: string, request: import("fas
     [userId, action, targetType ?? null, targetId ?? null, request.ip]);
 }
 
+// Liveness is intentionally independent of database availability: the process can still be alive while dependencies recover.
+app.get("/api/live", async () => ({
+  status: "alive",
+  service: "matrix-panel-api",
+  timestamp: new Date().toISOString()
+}));
+
 app.get("/api/health", async (_request, reply) => {
   let database: "connected" | "unavailable" | "not_configured" = "not_configured";
   if (pool) {
