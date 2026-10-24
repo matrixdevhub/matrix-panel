@@ -325,6 +325,11 @@ app.get("/api/profile/servers/:identifier/files", { preHandler: requireUser }, a
 
 app.get("/api/profile/servers/:identifier/console", { websocket: true, preHandler: requireUser }, (browserSocket, request) => {
   void (async () => {
+    // Browser console sockets must come from the configured web origin.
+    if (request.headers.origin !== config.WEB_ORIGIN) {
+      browserSocket.close(1008, "Origin not allowed");
+      return;
+    }
     const params = z.object({ identifier: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/) }).safeParse(request.params);
     if (!params.success) { browserSocket.close(1008, "Invalid server identifier"); return; }
     let token: string | null;
@@ -333,7 +338,14 @@ app.get("/api/profile/servers/:identifier/console", { websocket: true, preHandle
     if (!token) { browserSocket.close(1008, "Connect your Pterodactyl Client API key first"); return; }
     try {
       const credentials = await clientRequest<{ data: { socket: string; token: string } }>(token, "/servers/" + params.data.identifier + "/websocket");
-      const remote = new WebSocket(credentials.data.socket, { handshakeTimeout: 10000 });
+      const socketUrl = new URL(credentials.data.socket);
+      const secureSocket = socketUrl.protocol === "wss:";
+      const developmentSocket = config.NODE_ENV !== "production" && socketUrl.protocol === "ws:";
+      if ((!secureSocket && !developmentSocket) || socketUrl.username || socketUrl.password) {
+        browserSocket.close(1008, "Invalid upstream console URL");
+        return;
+      }
+      const remote = new WebSocket(socketUrl.toString(), { handshakeTimeout: 10000 });
       let authenticated = false;
       const closeBoth = (code?: number, reason?: Buffer) => {
         if (browserSocket.readyState === WebSocket.OPEN || browserSocket.readyState === WebSocket.CONNECTING) browserSocket.close(code, reason?.toString());
