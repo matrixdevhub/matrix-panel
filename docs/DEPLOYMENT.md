@@ -46,7 +46,7 @@ Edit `.env` locally on the VPS. Set `NODE_ENV=production`, `API_HOST=127.0.0.1`,
 
 Keep API keys out of frontend variables, Git commits, logs, screenshots, and chat. Back up the credential-encryption key securely; changing it can make stored encrypted credentials unreadable.
 
-Run `./scripts/install.sh` from the repository root to install npm dependencies and build both workspaces. It does not configure PostgreSQL, Nginx, Cloudflare, TLS, or systemd.
+Run `./scripts/install.sh` from the repository root as the non-root deployment user. It interactively asks for the public hostname, an already-created dedicated PostgreSQL `DATABASE_URL`, and the Pterodactyl HTTPS URL/Application API key; it generates `SETUP_TOKEN` and `CREDENTIAL_ENCRYPTION_KEY`, writes `.env` with mode `600`, then runs `npm install`, `npm run typecheck`, and `npm run build`. Store the printed one-time setup token privately. The script does not install/configure PostgreSQL, Nginx, Cloudflare Tunnel, DNS/TLS, or systemd, and it must not be treated as a complete server installer.
 
 ## 2. Nginx origin
 
