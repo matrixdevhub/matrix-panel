@@ -47,6 +47,9 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [authUser, setAuthUser] = useState<{ username: string; role: string } | null>(null);
   const [authChecking, setAuthChecking] = useState(true);
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [registerEmail, setRegisterEmail] = useState("");
+  const [registerUsername, setRegisterUsername] = useState("");
   const [loginName, setLoginName] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
@@ -272,6 +275,21 @@ export default function App() {
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [active, authUser, metricsRefresh]);
 
+  async function register(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setLoginBusy(true); setLoginError("");
+    try {
+      const response = await fetch(`${API}/api/auth/register`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: registerEmail, username: registerUsername, password: loginPassword })
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || result.error || "Registration failed");
+      setAuthUser(result.user);
+    } catch (e) { setLoginError(e instanceof Error ? e.message : "Registration failed"); }
+    finally { setLoginBusy(false); }
+  }
+
   async function login(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault(); setLoginBusy(true); setLoginError("");
     try {
@@ -329,7 +347,7 @@ export default function App() {
   ];
 
   if (authChecking) return <div className="auth-shell"><div className="auth-card"><div className="brand-mark"><Command size={21}/></div><h1>Matrix Panel</h1><p>Checking your secure session…</p></div></div>;
-  if (!authUser) return <div className="auth-shell"><form className="auth-card" onSubmit={login}><div className="brand-mark"><Command size={21}/></div><div className="eyebrow"><span className="eyebrow-line"/> SECURE CONTROL CENTER</div><h1>Welcome back</h1><p>Sign in to access your Matrix Panel workspace.</p>{loginError && <div className="alert error"><ShieldCheck size={18}/><div><b>Sign in failed</b><p>{loginError}</p></div></div>}<label className="auth-label">Email or username<input autoComplete="username" required value={loginName} onChange={e => setLoginName(e.target.value)} placeholder="admin" /></label><label className="auth-label">Password<input type="password" autoComplete="current-password" required value={loginPassword} onChange={e => setLoginPassword(e.target.value)} placeholder="Your password" /></label><button className="button primary auth-submit" type="submit" disabled={loginBusy}>{loginBusy ? "Signing in…" : "Sign in"}</button><small className="auth-note">First-time setup is performed through the protected API setup endpoint by the server owner.</small></form></div>;
+  if (!authUser) return <div className="auth-shell"><form className="auth-card" onSubmit={authMode === "login" ? login : register}><div className="brand-mark"><Command size={21}/></div><div className="eyebrow"><span className="eyebrow-line"/> SECURE CONTROL CENTER</div><h1>{authMode === "login" ? "Welcome back" : "Create your account"}</h1><p>{authMode === "login" ? "Sign in to access your Matrix Panel workspace." : "Create a user account to access your own workspace."}</p>{loginError && <div className="alert error"><ShieldCheck size={18}/><div><b>{authMode === "login" ? "Sign in failed" : "Registration failed"}</b><p>{loginError}</p></div></div>}{authMode === "register" && <><label className="auth-label">Email<input type="email" autoComplete="email" required maxLength={254} value={registerEmail} onChange={e => setRegisterEmail(e.target.value)} placeholder="you@example.com" /></label><label className="auth-label">Username<input autoComplete="username" required minLength={3} maxLength={32} pattern="[A-Za-z0-9_-]+" value={registerUsername} onChange={e => setRegisterUsername(e.target.value)} placeholder="your_username" /></label></>}{authMode === "login" && <label className="auth-label">Email or username<input autoComplete="username" required value={loginName} onChange={e => setLoginName(e.target.value)} placeholder="admin" /></label>}<label className="auth-label">Password<input type="password" autoComplete={authMode === "login" ? "current-password" : "new-password"} required minLength={authMode === "register" ? 12 : 1} maxLength={128} value={loginPassword} onChange={e => setLoginPassword(e.target.value)} placeholder={authMode === "register" ? "At least 12 characters" : "Your password"} /></label><button className="button primary auth-submit" type="submit" disabled={loginBusy}>{loginBusy ? (authMode === "login" ? "Signing in…" : "Creating account…") : (authMode === "login" ? "Sign in" : "Create account")}</button><button className="button secondary auth-submit" type="button" disabled={loginBusy} onClick={() => { setAuthMode(authMode === "login" ? "register" : "login"); setLoginError(""); }}>{authMode === "login" ? "Create a new account" : "Already have an account? Sign in"}</button><small className="auth-note">The first administrator account is created separately using the protected initial setup endpoint. Public registration only creates standard user accounts.</small></form></div>;
 
   return <div className="app-shell">
     {sidebarOpen && <button className="mobile-scrim" aria-label="Close navigation" onClick={() => setSidebarOpen(false)} />}
