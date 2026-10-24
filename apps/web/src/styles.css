@@ -77,3 +77,92 @@
 
 
 .monitoring-stat-grid{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+
+/* Phase 5: persisted user themes and responsive polish. */
+:root[data-theme="dark-purple"] { --accent:#c084fc; }
+:root[data-theme="dark-blue-purple"] { --accent:#8b9cff; }
+:root[data-theme="dark-red-purple-pink-blue"] { --accent:#f08acb; }
+:root[data-theme="dark-purple"] body { background:radial-gradient(ellipse at 75% -25%,rgba(168,85,247,.18),transparent 45%),var(--bg); }
+:root[data-theme="dark-blue-purple"] body { background:radial-gradient(ellipse at 75% -25%,rgba(79,112,255,.18),transparent 45%),var(--bg); }
+:root[data-theme="dark-red-purple-pink-blue"] body { background:radial-gradient(ellipse at 75% -25%,rgba(236,72,153,.15),transparent 45%),var(--bg); }
+
+:root[data-theme="light"] {
+  color-scheme:light;
+  --bg:#f3f5fb; --panel:#ffffff; --panel2:#edf0f8; --border:#dbe0eb;
+  --muted:#657087; --text:#202638; --accent:#6846c7; --green:#17875e;
+}
+:root[data-theme="light"] body { color:var(--text); background:radial-gradient(ellipse at 75% -25%,rgba(130,98,220,.10),transparent 45%),var(--bg); }
+:root[data-theme="light"] .sidebar { background:#fff; border-color:#dbe0eb; }
+:root[data-theme="light"] .main, :root[data-theme="light"] .content { color:var(--text); }
+:root[data-theme="light"] .topbar { background:#ffffffdf; border-color:#dbe0eb; }
+:root[data-theme="light"] .crumbs b, :root[data-theme="light"] .welcome-row h1,
+:root[data-theme="light"] .section-heading h2, :root[data-theme="light"] .stat-value,
+:root[data-theme="light"] .table-title b, :root[data-theme="light"] .server-cell b,
+:root[data-theme="light"] .info-card-head b, :root[data-theme="light"] .quick-card button b,
+:root[data-theme="light"] .profile-info b, :root[data-theme="light"] .nav-item,
+:root[data-theme="light"] .workspace-text b { color:#202638; }
+:root[data-theme="light"] .brand small, :root[data-theme="light"] .subtitle,
+:root[data-theme="light"] .table-title small, :root[data-theme="light"] .server-cell small,
+:root[data-theme="light"] .stat-detail, :root[data-theme="light"] .stat-kicker,
+:root[data-theme="light"] .profile-info small, :root[data-theme="light"] .info-card-head small,
+:root[data-theme="light"] .health-row, :root[data-theme="light"] .table-footer,
+:root[data-theme="light"] footer { color:#657087; }
+:root[data-theme="light"] .workspace, :root[data-theme="light"] .stat-card,
+:root[data-theme="light"] .panel-card, :root[data-theme="light"] .info-card,
+:root[data-theme="light"] .monitoring-health-card, :root[data-theme="light"] .monitoring-detail,
+:root[data-theme="light"] .profile-form-card, :root[data-theme="light"] .monitoring-overall-status {
+  background:#fff; border-color:#dbe0eb;
+}
+:root[data-theme="light"] .nav-item:hover, :root[data-theme="light"] .nav-item.selected,
+:root[data-theme="light"] tbody tr:hover { background:#f0edfb; }
+:root[data-theme="light"] .top-actions .status-pill,
+:root[data-theme="light"] .button.secondary, :root[data-theme="light"] .search-box,
+:root[data-theme="light"] .admin-inline-form input, :root[data-theme="light"] .admin-inline-form select,
+:root[data-theme="light"] .profile-form input, :root[data-theme="light"] .profile-form select,
+:root[data-theme="light"] .profile-form textarea, :root[data-theme="light"] .minecraft-manager input,
+:root[data-theme="light"] .minecraft-manager select, :root[data-theme="light"] .plugin-search input {
+  background:#f7f8fc; color:#202638; border-color:#d3d9e6;
+}
+:root[data-theme="light"] .search-box input { color:#202638; }
+:root[data-theme="light"] thead { background:#f0f2f8; border-color:#dbe0eb; }
+:root[data-theme="light"] th { color:#657087; }
+:root[data-theme="light"] td, :root[data-theme="light"] .health-row,
+:root[data-theme="light"] .monitoring-info-row { color:#4c566d; border-color:#e6e9f1; }
+:root[data-theme="light"] .table-toolbar, :root[data-theme="light"] .table-footer,
+:root[data-theme="light"] .server-tabs { border-color:#e1e5ee; }
+:root[data-theme="light"] .server-tabs { background:#fff; }
+:root[data-theme="light"] .server-tabs button { color:#657087; }
+:root[data-theme="light"] .server-tabs button.active { background:#eee8ff; color:#5a36b5; }
+:root[data-theme="light"] .alert.setup { background:#f2efff; border-color:#d9cffc; color:#39266e; }
+:root[data-theme="light"] .alert.setup p { color:#594d7a; }
+:root[data-theme="light"] .alert.error { background:#fff0f0; border-color:#f1c5c5; color:#9e2525; }
+:root[data-theme="light"] .alert.error p { color:#8d4545; }
+:root[data-theme="light"] .upgrade-card { background:linear-gradient(145deg,#f4f0ff,#f8f9fd); border-color:#ded5fb; }
+:root[data-theme="light"] .upgrade-card>b { color:#28213d; }
+:root[data-theme="light"] .quick-card>button { border-color:#e6e9f1; }
+:root[data-theme="light"] .quick-card button small { color:#657087; }
+:root[data-theme="light"] .monitoring-meter { background:#e4e8f1; }
+:root[data-theme="light"] .file-toolbar, :root[data-theme="light"] .plugin-row,
+:root[data-theme="light"] .plugin-summary, :root[data-theme="light"] .motd-preview {
+  background:#f7f8fc; border-color:#dbe0eb; color:#30394e;
+}
+:root[data-theme="light"] .file-list b, :root[data-theme="light"] .plugin-details b { color:#202638; }
+:root[data-theme="light"] .file-list small, :root[data-theme="light"] .plugin-details small { color:#657087; }
+:root[data-theme="light"] .credential-help { color:#657087; }
+
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline:2px solid var(--accent); outline-offset:2px;
+}
+@media(max-width:760px) {
+  .admin-inline-form { align-items:stretch; }
+  .admin-inline-form input, .admin-inline-form select { min-width:0; max-width:none; width:100%; flex:1 1 100%; }
+  .admin-inline-form .button { justify-content:center; }
+  .resource-view, .server-resource-view, .profile-settings-grid { min-width:0; }
+  .monitoring-stat-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+@media(max-width:380px) {
+  .stats-grid, .monitoring-stat-grid { grid-template-columns:1fr; }
+  .content { padding-left:11px; padding-right:11px; }
+  .welcome-row h1 { font-size:24px; }
+}
+
