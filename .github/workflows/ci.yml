@@ -23,6 +23,8 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install
+      - name: Run API security regression tests
+        run: npm run test --workspace @matrix-panel/api
       - name: Type-check API and web
         run: npm run typecheck
       - name: Build API and web
