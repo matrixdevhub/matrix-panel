@@ -10,7 +10,10 @@ export async function hashPassword(password: string) {
 }
 export async function verifyPassword(password: string, stored: string) {
  const [scheme, salt, expectedHex] = stored.split(":");
- if (scheme !== "scrypt" || !salt || !expectedHex) return false;
+ // Validate the serialized hash before invoking scrypt; malformed DB data must fail closed.
+ if (scheme !== "scrypt" || !salt || !expectedHex
+   || !/^[0-9a-f]{32}$/.test(salt)
+   || !/^[0-9a-f]{128}$/.test(expectedHex)) return false;
  const expected = Buffer.from(expectedHex, "hex");
  const actual = await scrypt(password, salt, expected.length) as Buffer;
  return actual.length === expected.length && timingSafeEqual(actual, expected);
