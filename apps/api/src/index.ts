@@ -372,10 +372,31 @@ app.get("/api/profile/servers/:identifier/console", { websocket: true, preHandle
         if (remote.readyState === WebSocket.OPEN || remote.readyState === WebSocket.CONNECTING) remote.close();
       };
       remote.on("open", () => {
+        // A successful TCP/WebSocket handshake does not mean Pterodactyl accepted
+        // the short-lived console token. Do not allow browser commands until the
+        // upstream explicitly confirms authentication.
         remote.send(JSON.stringify({ event: "auth", args: [credentials.data.token] }));
-        authenticated = true;
       });
-      remote.on("message", data => { if (browserSocket.readyState === WebSocket.OPEN) browserSocket.send(data.toString()); });
+      remote.on("message", data => {
+        const message = data.toString();
+        let eventName = "";
+        try {
+          const parsed = JSON.parse(message) as { event?: unknown };
+          if (typeof parsed.event === "string") eventName = parsed.event;
+        } catch {
+          // Preserve non-JSON upstream messages for diagnostics; never treat them as auth success.
+        }
+        if (eventName === "auth success" && !authenticated) {
+          authenticated = true;
+          remote.send(JSON.stringify({ event: "send logs", args: [null] }));
+          remote.send(JSON.stringify({ event: "send stats", args: [] }));
+        } else if (eventName === "auth error") {
+          if (browserSocket.readyState === WebSocket.OPEN) browserSocket.send(message);
+          closeBoth(1008, Buffer.from("Pterodactyl console authentication failed"));
+          return;
+        }
+        if (browserSocket.readyState === WebSocket.OPEN) browserSocket.send(message);
+      });
       remote.on("close", (code, reason) => { if (browserSocket.readyState === WebSocket.OPEN) browserSocket.close(code, reason.toString()); });
       remote.on("error", () => closeBoth(1011, Buffer.from("Pterodactyl console connection failed")));
       browserSocket.on("message", data => {
