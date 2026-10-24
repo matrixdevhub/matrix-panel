@@ -323,7 +323,18 @@ app.get("/api/profile/servers/:identifier/files", { preHandler: requireUser }, a
 
 
 
-app.get("/api/profile/servers/:identifier/console", { websocket: true, preHandler: requireUser }, (browserSocket, request) => {
+app.get("/api/profile/servers/:identifier/console", {
+  websocket: true,
+  preHandler: [
+    requireUser,
+    async (request, reply) => {
+      // WebSocket handshakes use cookies, so reject missing and cross-origin Origin headers.
+      if (request.headers.origin !== config.WEB_ORIGIN) {
+        return reply.code(403).send({ error: "Origin not allowed" });
+      }
+    }
+  ]
+}, (browserSocket, request) => {
   void (async () => {
     const params = z.object({ identifier: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/) }).safeParse(request.params);
     if (!params.success) { browserSocket.close(1008, "Invalid server identifier"); return; }
@@ -333,7 +344,23 @@ app.get("/api/profile/servers/:identifier/console", { websocket: true, preHandle
     if (!token) { browserSocket.close(1008, "Connect your Pterodactyl Client API key first"); return; }
     try {
       const credentials = await clientRequest<{ data: { socket: string; token: string } }>(token, "/servers/" + params.data.identifier + "/websocket");
-      const remote = new WebSocket(credentials.data.socket, { handshakeTimeout: 10000 });
+      let remoteUrl: URL;
+      try {
+        remoteUrl = new URL(credentials.data.socket);
+      } catch {
+        browserSocket.close(1008, "Pterodactyl returned an invalid console URL");
+        return;
+      }
+      // Production console traffic must be encrypted. Allow ws:// only in local development.
+      if (remoteUrl.protocol !== "wss:" && !(config.NODE_ENV !== "production" && remoteUrl.protocol === "ws:")) {
+        browserSocket.close(1008, "Insecure console URL rejected");
+        return;
+      }
+      if (remoteUrl.username || remoteUrl.password) {
+        browserSocket.close(1008, "Console URL credentials are not allowed");
+        return;
+      }
+      const remote = new WebSocket(remoteUrl.toString(), { handshakeTimeout: 10000 });
       let authenticated = false;
       const closeBoth = (code?: number, reason?: Buffer) => {
         if (browserSocket.readyState === WebSocket.OPEN || browserSocket.readyState === WebSocket.CONNECTING) browserSocket.close(code, reason?.toString());
