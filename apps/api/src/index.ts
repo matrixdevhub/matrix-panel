@@ -361,6 +361,47 @@ app.post("/api/profile/servers/:identifier/backups", { preHandler: requireUser }
 });
 
 
+app.post("/api/profile/servers/:identifier/databases", { preHandler: requireUser }, async (request, reply) => {
+  if (!originGuard(request, reply)) return;
+  const params = z.object({ identifier: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/) }).safeParse(request.params);
+  const body = z.object({ database: z.string().min(1).max(48).regex(/^[A-Za-z0-9_]+$/) }).safeParse(request.body);
+  if (!params.success || !body.success) return reply.code(400).send({ error: "Invalid database name", message: "Use 1–48 letters, numbers, or underscores." });
+  let token: string | null;
+  try { token = await userClientToken(request.sessionUser!.id); } catch { return reply.code(503).send({ error: "Could not decrypt saved credentials" }); }
+  if (!token) return reply.code(409).send({ error: "Connect your Pterodactyl Client API key first" });
+  try {
+    const result = await clientRequest(token, "/servers/" + params.data.identifier + "/databases", "POST", body.data);
+    await audit(request.sessionUser!.id, "server.database.create", request, "server", params.data.identifier);
+    return reply.code(201).send(result);
+  } catch (error) { const e = error as { statusCode?: number; message?: string }; return reply.code(e.statusCode ?? 502).send({ error: "Could not create database", message: e.message ?? "Pterodactyl Client API failed" }); }
+});
+app.post("/api/profile/servers/:identifier/databases/:databaseId/rotate-password", { preHandler: requireUser }, async (request, reply) => {
+  if (!originGuard(request, reply)) return;
+  const params = z.object({ identifier: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/), databaseId: z.coerce.number().int().positive() }).safeParse(request.params);
+  if (!params.success) return reply.code(400).send({ error: "Invalid database identifier" });
+  let token: string | null;
+  try { token = await userClientToken(request.sessionUser!.id); } catch { return reply.code(503).send({ error: "Could not decrypt saved credentials" }); }
+  if (!token) return reply.code(409).send({ error: "Connect your Pterodactyl Client API key first" });
+  try {
+    const result = await clientRequest(token, "/servers/" + params.data.identifier + "/databases/" + params.data.databaseId + "/rotate-password", "POST", {});
+    await audit(request.sessionUser!.id, "server.database.rotate_password", request, "server", params.data.identifier);
+    return result;
+  } catch (error) { const e = error as { statusCode?: number; message?: string }; return reply.code(e.statusCode ?? 502).send({ error: "Could not rotate database password", message: e.message ?? "Pterodactyl Client API failed" }); }
+});
+app.delete("/api/profile/servers/:identifier/databases/:databaseId", { preHandler: requireUser }, async (request, reply) => {
+  if (!originGuard(request, reply)) return;
+  const params = z.object({ identifier: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/), databaseId: z.coerce.number().int().positive() }).safeParse(request.params);
+  if (!params.success) return reply.code(400).send({ error: "Invalid database identifier" });
+  let token: string | null;
+  try { token = await userClientToken(request.sessionUser!.id); } catch { return reply.code(503).send({ error: "Could not decrypt saved credentials" }); }
+  if (!token) return reply.code(409).send({ error: "Connect your Pterodactyl Client API key first" });
+  try {
+    await clientRequest(token, "/servers/" + params.data.identifier + "/databases/" + params.data.databaseId, "DELETE");
+    await audit(request.sessionUser!.id, "server.database.delete", request, "server", params.data.identifier);
+    return { ok: true };
+  } catch (error) { const e = error as { statusCode?: number; message?: string }; return reply.code(e.statusCode ?? 502).send({ error: "Could not delete database", message: e.message ?? "Pterodactyl Client API failed" }); }
+});
+
 app.post("/api/profile/servers/:identifier/schedules", { preHandler: requireUser }, async (request, reply) => {
   if (!originGuard(request, reply)) return;
   const params = z.object({ identifier: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/) }).safeParse(request.params);
