@@ -1,6 +1,18 @@
 import pg from "pg";
 import { config } from "./config.js";
 export const pool = config.DATABASE_URL ? new pg.Pool({ connectionString: config.DATABASE_URL, max: 10, connectionTimeoutMillis: 3000, idleTimeoutMillis: 30000 }) : null;
+
+if (pool) {
+  pool.on("error", (error: Error & { code?: string }) => {
+    console.error(JSON.stringify({
+      level: "error",
+      event: "postgres.pool.idle_client_error",
+      code: error.code ?? "UNKNOWN",
+      message: error.message,
+      timestamp: new Date().toISOString()
+    }));
+  });
+}
 export async function migrate() {
  if (!pool) return;
  await pool.query(`
