@@ -108,6 +108,10 @@ export default function App() {
   const [motdFileContent, setMotdFileContent] = useState<string | null>(null);
   const [motdBusy, setMotdBusy] = useState(false);
   const [motdFeedback, setMotdFeedback] = useState("");
+  const [propertiesContent, setPropertiesContent] = useState<string | null>(null);
+  const [propertiesValues, setPropertiesValues] = useState<Record<string, string>>({});
+  const [propertiesBusy, setPropertiesBusy] = useState(false);
+  const [propertiesFeedback, setPropertiesFeedback] = useState("");
   const [consoleStatus, setConsoleStatus] = useState("Connect a Client API key to open console.");
   const [serverTab, setServerTab] = useState("Console");
   const [serverResource, setServerResource] = useState<Record<string, unknown>[]>([]);
@@ -300,6 +304,58 @@ export default function App() {
       {!credentialConnected ? <div className="server-resource-empty">Connect your Pterodactyl Client API key on the dashboard to use server management.</div> :
       serverTab === "Console" ? <><div className="console-output">{consoleOutput.map((line,index) => <pre key={index}>{line}</pre>)}</div><form className="console-input-row" onSubmit={event => { event.preventDefault(); if (consoleSocket.current?.readyState === WebSocket.OPEN && consoleInput.trim()) { consoleSocket.current.send(JSON.stringify({ event: "send command", args: [consoleInput] })); setConsoleInput(""); } }}><input value={consoleInput} onChange={event => setConsoleInput(event.target.value)} placeholder="Enter a server command…" disabled={!credentialConnected}/><button className="button primary" type="submit" disabled={!credentialConnected || !consoleInput.trim()}>Send</button></form></> :
       serverTab === "MOTD" ? <div className="server-resource-view minecraft-manager motd-manager"><div className="file-toolbar"><div><b>Minecraft MOTD Changer</b><p className="subtitle">Edit the message shown in the server list. Changes take effect after a server restart.</p></div><button className="button secondary" disabled={motdBusy} onClick={async()=>{setMotdBusy(true);setMotdFeedback("");try{const response=await fetch(`${API}/api/profile/servers/${encodeURIComponent(selectedServer.identifier)}/files/contents?file=${encodeURIComponent("/server.properties")}`,{credentials:"include"});const text=await response.text();if(!response.ok)throw new Error(text||"Could not read server.properties");const line=text.split(/\r?\n/).find(row=>/^\s*motd\s*=/.test(row));setMotdFileContent(text);setMotdValue(line?line.slice(line.indexOf("=")+1):"");setMotdFeedback("Loaded server.properties.");}catch(error){setMotdFeedback(error instanceof Error?error.message:"Could not load MOTD");}finally{setMotdBusy(false);}}}><RefreshCw size={14}/> Load current MOTD</button></div><label className="auth-label">Server list message<input value={motdValue} onChange={event=>setMotdValue(event.target.value.replace(/[\r\n]/g,"").slice(0,255))} maxLength={255} placeholder="Welcome to my Minecraft server!" disabled={motdFileContent===null}/></label><div className="motd-preview"><span className="motd-preview-icon">M</span><div><b>{selectedServer.name}</b><p>{motdFileContent===null?"Load server.properties to preview your current message.":motdValue||"A Minecraft Server"}</p></div><span className="motd-preview-version">1.20.x</span></div><div className="minecraft-quick-actions"><button className="button primary" disabled={motdBusy||motdFileContent===null||!motdValue.trim()} onClick={async()=>{setMotdBusy(true);setMotdFeedback("");try{const lines=(motdFileContent??"").split(/\r?\n/);const index=lines.findIndex(row=>/^\s*motd\s*=/.test(row));if(index>=0)lines[index]="motd="+motdValue;else lines.push("motd="+motdValue);const content=lines.join("\n");const response=await fetch(`${API}/api/profile/servers/${encodeURIComponent(selectedServer.identifier)}/files/contents?file=${encodeURIComponent("/server.properties")}`,{method:"PUT",credentials:"include",headers:{"Content-Type":"application/json"},body:JSON.stringify({content})});const payload=await response.json().catch(()=>({}));if(!response.ok)throw new Error(payload.message||payload.error||"Could not save MOTD");setMotdFileContent(content);setMotdFeedback("MOTD saved to server.properties. Restart the server for the change to appear.");}catch(error){setMotdFeedback(error instanceof Error?error.message:"Could not save MOTD");}finally{setMotdBusy(false);}}}><ShieldCheck size={14}/> Save MOTD</button><button className="button secondary" disabled={motdBusy||motdFileContent===null} onClick={()=>{const line=(motdFileContent??"").split(/\r?\n/).find(row=>/^\s*motd\s*=/.test(row));setMotdValue(line?line.slice(line.indexOf("=")+1):"");setMotdFeedback("Changes reverted.");}}>Discard changes</button></div>{motdFeedback&&<p className="credential-help" role="status">{motdFeedback}</p>}<div className="alert setup"><div className="setup-icon"><ShieldCheck size={18}/></div><div><b>Restart required</b><p>This edits the server.properties file directly. Keep a backup before changing server settings; save requires file-write permission for this server.</p></div></div></div> :
+      serverTab === "Settings" ? <div className="server-resource-view minecraft-manager">
+        <div className="file-toolbar"><div><b>Minecraft Server Settings PRO</b><p className="subtitle">Edit common server.properties options without replacing unrelated settings.</p></div><button className="button secondary" disabled={propertiesBusy} onClick={async () => {
+          setPropertiesBusy(true); setPropertiesFeedback("");
+          try {
+            const response = await fetch(`${API}/api/profile/servers/${encodeURIComponent(selectedServer.identifier)}/files/contents?file=${encodeURIComponent("/server.properties")}`, { credentials: "include" });
+            const content = await response.text();
+            if (!response.ok) throw new Error(content || "Could not read server.properties");
+            const values: Record<string,string> = {};
+            content.split(/\r?\n/).forEach(line => { const trimmed = line.trim(); if (!trimmed || trimmed.startsWith("#")) return; const equals = line.indexOf("="); if (equals > -1) values[line.slice(0,equals).trim()] = line.slice(equals+1); });
+            setPropertiesContent(content); setPropertiesValues(values); setPropertiesFeedback("Loaded server.properties. Existing unlisted settings will be preserved.");
+          } catch (error) { setPropertiesFeedback(error instanceof Error ? error.message : "Could not load settings"); }
+          finally { setPropertiesBusy(false); }
+        }}><RefreshCw size={14}/> Load settings</button></div>
+        <div className="alert setup"><div className="setup-icon"><ShieldCheck size={18}/></div><div><b>Before editing</b><p>Load the current file first. Changes are saved to server.properties and usually require a restart. Keep a backup before changing gameplay or security options.</p></div></div>
+        <div className="settings-grid">
+          {[
+            {key:"motd",label:"Server MOTD",hint:"Message displayed in the server list",type:"text"},
+            {key:"max-players",label:"Maximum players",hint:"Player slot limit",type:"number"},
+            {key:"difficulty",label:"Difficulty",hint:"peaceful, easy, normal, hard",type:"select",options:["peaceful","easy","normal","hard"]},
+            {key:"gamemode",label:"Default game mode",hint:"survival, creative, adventure, spectator",type:"select",options:["survival","creative","adventure","spectator"]},
+            {key:"pvp",label:"Player vs Player",hint:"Allow players to damage each other",type:"select",options:["true","false"]},
+            {key:"online-mode",label:"Online mode",hint:"Keep enabled for authenticated public servers",type:"select",options:["true","false"]},
+            {key:"white-list",label:"Whitelist",hint:"Restrict access to approved players",type:"select",options:["true","false"]},
+            {key:"spawn-protection",label:"Spawn protection",hint:"Protected spawn radius in blocks",type:"number"},
+            {key:"view-distance",label:"View distance",hint:"Chunk render distance",type:"number"},
+            {key:"simulation-distance",label:"Simulation distance",hint:"Chunks actively simulated",type:"number"},
+            {key:"allow-flight",label:"Allow flight",hint:"Permit flight without kicking",type:"select",options:["true","false"]},
+            {key:"server-port",label:"Server port",hint:"Change only if your host allows it",type:"number"}
+          ].map(field => <label className="auth-label" key={field.key}>{field.label}<small>{field.hint}</small>{field.type === "select" ? <select value={propertiesValues[field.key] ?? ""} disabled={propertiesContent===null} onChange={event=>setPropertiesValues(previous=>({...previous,[field.key]:event.target.value}))}><option value="">Use server default / not set</option>{field.options?.map(option=><option key={option} value={option}>{option}</option>)}</select> : <input type={field.type==="number"?"number":"text"} value={propertiesValues[field.key] ?? ""} disabled={propertiesContent===null} onChange={event=>setPropertiesValues(previous=>({...previous,[field.key]:event.target.value}))} placeholder={field.key==="motd"?"Welcome to Matrix Minecraft!":"Not set"}/>}</label>)}
+        </div>
+        <div className="minecraft-quick-actions"><button className="button primary" disabled={propertiesBusy||propertiesContent===null} onClick={async()=>{
+          if (!propertiesContent) return;
+          const numericKeys=["max-players","spawn-protection","view-distance","simulation-distance","server-port"];
+          for (const key of numericKeys) { const value=propertiesValues[key]; if (value!==undefined && value!=="" && (!/^\d+$/.test(value) || Number(value)<0 || Number(value)>(key==="server-port"?65535:10000))) { setPropertiesFeedback("Invalid numeric value for "+key+". Use a non-negative whole number within a reasonable range."); return; } }
+          if (propertiesValues["server-port"]!==undefined && propertiesValues["server-port"]!=="" && Number(propertiesValues["server-port"])<1) { setPropertiesFeedback("Server port must be between 1 and 65535."); return; }
+          if (propertiesValues.motd!==undefined && /[\r\n]/.test(propertiesValues.motd)) { setPropertiesFeedback("MOTD must fit on one line."); return; }
+          setPropertiesBusy(true); setPropertiesFeedback("");
+          try {
+            const lines=propertiesContent.split(/\r?\n/);
+            const touched=new Set<string>();
+            const output=lines.map(line=>{const trimmed=line.trim(); if(!trimmed||trimmed.startsWith("#"))return line; const equals=line.indexOf("="); if(equals<0)return line; const key=line.slice(0,equals).trim(); if(!(key in propertiesValues))return line; touched.add(key); const value=propertiesValues[key]; return value==="" ? "# "+key+" intentionally unset by Matrix Panel" : key+"="+value;});
+            Object.entries(propertiesValues).forEach(([key,value])=>{if(!touched.has(key)&&value!=="")output.push(key+"="+value);});
+            const content=output.join("\n");
+            const response=await fetch(`${API}/api/profile/servers/${encodeURIComponent(selectedServer.identifier)}/files/contents?file=${encodeURIComponent("/server.properties")}`,{method:"PUT",credentials:"include",headers:{"Content-Type":"application/json"},body:JSON.stringify({content})});
+            const payload=await response.json().catch(()=>({}));
+            if(!response.ok)throw new Error(payload.message||payload.error||"Could not save server settings");
+            setPropertiesContent(content); setPropertiesFeedback("Settings saved to server.properties. Restart the server to apply changes.");
+          } catch(error){setPropertiesFeedback(error instanceof Error?error.message:"Could not save settings");}
+          finally{setPropertiesBusy(false);}
+        }}><ShieldCheck size={14}/> Save settings</button><button className="button secondary" disabled={propertiesBusy||propertiesContent===null} onClick={()=>{if(!propertiesContent)return;const values:Record<string,string>={};propertiesContent.split(/\r?\n/).forEach(line=>{const trimmed=line.trim();if(!trimmed||trimmed.startsWith("#"))return;const i=line.indexOf("=");if(i>-1)values[line.slice(0,i).trim()]=line.slice(i+1);});setPropertiesValues(values);setPropertiesFeedback("Changes discarded.");}}>Discard changes</button></div>
+        {propertiesFeedback&&<p className="credential-help" role="status">{propertiesFeedback}</p>}
+      </div> :
       serverTab === "Minecraft" ? <div className="server-resource-view minecraft-manager">
         <div className="file-toolbar"><div><b>Minecraft Player Manager PRO</b><p className="subtitle">Manage players through the live server console.</p></div><span className={`health-chip ${consoleStatus === "Connected" ? "healthy" : "waiting"}`}>{consoleStatus === "Connected" ? "Console connected" : "Console disconnected"}</span></div>
         <form className="console-input-row" onSubmit={event => {
