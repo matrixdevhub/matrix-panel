@@ -72,3 +72,6 @@
 .monitoring-overall-status>div p{margin:4px 0 0;color:var(--muted);font-size:12px;line-height:1.5}
 .monitoring-overall-status>small{color:var(--muted);font-size:11px;white-space:nowrap}
 @media(max-width:620px){.monitoring-overall-status{align-items:flex-start;flex-wrap:wrap}.monitoring-overall-status>small{width:100%;padding-left:51px;white-space:normal}}
+
+
+.monitoring-stat-grid{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
