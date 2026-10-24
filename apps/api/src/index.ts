@@ -323,7 +323,18 @@ app.get("/api/profile/servers/:identifier/files", { preHandler: requireUser }, a
 
 
 
-app.get("/api/profile/servers/:identifier/console", { websocket: true, preHandler: requireUser }, (browserSocket, request) => {
+app.get("/api/profile/servers/:identifier/console", {
+  websocket: true,
+  preHandler: [
+    requireUser,
+    async (request, reply) => {
+      // WebSocket handshakes use cookies, so reject missing and cross-origin Origin headers.
+      if (request.headers.origin !== config.WEB_ORIGIN) {
+        return reply.code(403).send({ error: "Origin not allowed" });
+      }
+    }
+  ]
+}, (browserSocket, request) => {
   void (async () => {
     const params = z.object({ identifier: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/) }).safeParse(request.params);
     if (!params.success) { browserSocket.close(1008, "Invalid server identifier"); return; }
