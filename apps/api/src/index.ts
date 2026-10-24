@@ -12,6 +12,7 @@ import { hashPassword, hashToken, randomToken, verifyPassword } from "./security
 import { getPanelSummary, getServers, PterodactylError, applicationRequest } from "./pterodactyl.js";
 import { clientRequest, decryptCredential, encryptCredential } from "./pterodactyl-client.js";
 import { validateConsoleWebSocketUrl } from "./console-websocket-security.js";
+import { normalizeClientServer, normalizePowerSignal, type ClientServerRecord } from "./pterodactyl-server-data.js";
 
 const app = Fastify({ logger: true, bodyLimit: 1_048_576, trustProxy: config.NODE_ENV === "production" });
 await app.register(cors, { origin: config.WEB_ORIGIN, credentials: true });
@@ -277,13 +278,23 @@ app.get("/api/profile/servers", { preHandler: requireUser }, async (request, rep
   catch { return reply.code(503).send({ error: "Could not decrypt saved credentials. Check CREDENTIAL_ENCRYPTION_KEY." }); }
   if (!token) return reply.code(409).send({ error: "Connect your own Pterodactyl Client API key in profile settings first." });
   try {
-    const response = await clientRequest<{ data: Array<{ attributes: Record<string, any> }> }>(token, "/servers");
-    return { data: response.data.map(({ attributes: s }) => ({
-      id: s.identifier, uuid: s.uuid, identifier: s.identifier, name: s.name,
-      description: s.description ?? "", node: s.node ?? "—", ownerId: request.sessionUser!.id,
-      status: s.is_suspended ? "suspended" : s.is_installing ? "installing" : (s.current_state ?? s.status ?? "unknown"),
-      limits: { memory: s.limits?.memory ?? 0, disk: s.limits?.disk ?? 0, cpu: s.limits?.cpu ?? 0 }
-    })) };
+    const response = await clientRequest<{ data: Array<{ attributes: ClientServerRecord }> }>(token, "/servers");
+    const data = await Promise.all(response.data.map(async ({ attributes: server }) => {
+      // The Client API server list may omit current_state. Read the live resource
+      // endpoint for each server; one unavailable status must not hide the inventory.
+      let liveState: string | null = null;
+      try {
+        const resource = await clientRequest<{ attributes?: { current_state?: string | null } }>(
+          token,
+          "/servers/" + encodeURIComponent(server.identifier) + "/resources"
+        );
+        liveState = resource.attributes?.current_state ?? null;
+      } catch {
+        // Display "unknown" rather than inventing an online/offline status.
+      }
+      return normalizeClientServer(server, request.sessionUser!.id, liveState);
+    }));
+    return { data };
   } catch (error) {
     const e = error as { statusCode?: number; message?: string };
     return reply.code(e.statusCode ?? 502).send({ error: "Unable to load your servers", message: e.message ?? "Pterodactyl Client API failed" });
@@ -292,16 +303,17 @@ app.get("/api/profile/servers", { preHandler: requireUser }, async (request, rep
 app.post("/api/profile/servers/:identifier/power", { preHandler: requireUser }, async (request, reply) => {
   if (!originGuard(request, reply)) return;
   const params = z.object({ identifier: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/) }).safeParse(request.params);
-  const body = z.object({ signal: z.enum(["start","stop","restart","kill"]) }).safeParse(request.body);
-  if (!params.success || !body.success) return reply.code(400).send({ error: "Invalid server or power signal" });
+  const body = z.object({ signal: z.string() }).safeParse(request.body);
+  const signal = body.success ? normalizePowerSignal(body.data.signal) : null;
+  if (!params.success || !signal) return reply.code(400).send({ error: "Invalid server or power signal. Use start, stop, or restart." });
   let token: string | null;
   try { token = await userClientToken(request.sessionUser!.id); }
   catch { return reply.code(503).send({ error: "Could not decrypt saved credentials" }); }
   if (!token) return reply.code(409).send({ error: "Connect your Pterodactyl Client API key first" });
   try {
-    await clientRequest(token, "/servers/" + params.data.identifier + "/power", "POST", { signal: body.data.signal });
-    await audit(request.sessionUser!.id, "server.power." + body.data.signal, request, "server", params.data.identifier);
-    return { ok: true, signal: body.data.signal };
+    await clientRequest(token, "/servers/" + params.data.identifier + "/power", "POST", { signal });
+    await audit(request.sessionUser!.id, "server.power." + signal, request, "server", params.data.identifier);
+    return { ok: true, signal };
   } catch (error) {
     const e = error as { statusCode?: number; message?: string };
     return reply.code(e.statusCode ?? 502).send({ error: "Server power action failed", message: e.message ?? "Pterodactyl Client API failed" });
