@@ -120,9 +120,19 @@ app.get("/api/admin/users", { preHandler: requireAdmin }, async (request, reply)
 });
 app.get("/api/admin/audit-logs", { preHandler: requireAdmin }, async (request, reply) => {
   if (!dbRequired(reply)) return;
-  const parsed = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50) }).safeParse(request.query);
-  if (!parsed.success) return reply.code(400).send({ error: "Invalid limit" });
-  const rows = await pool!.query("SELECT a.id,a.action,a.target_type,a.target_id,a.metadata,a.ip_address,a.created_at,u.username AS actor FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_user_id ORDER BY a.created_at DESC LIMIT $1", [parsed.data.limit]);
+  const parsed = z.object({
+    limit: z.coerce.number().int().min(1).max(100).default(50),
+    action: z.string().trim().min(1).max(120).optional(),
+    actor: z.string().trim().min(1).max(64).optional(),
+    target_type: z.string().trim().min(1).max(64).optional(),
+    target_id: z.string().trim().min(1).max(128).optional()
+  }).safeParse(request.query);
+  if (!parsed.success) return reply.code(400).send({ error: "Invalid audit-log filters" });
+  const { limit, action, actor, target_type, target_id } = parsed.data;
+  const rows = await pool!.query(
+    "SELECT a.id,a.action,a.target_type,a.target_id,a.metadata,a.ip_address,a.created_at,u.username AS actor FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_user_id WHERE ($2::text IS NULL OR a.action ILIKE '%' || $2 || '%') AND ($3::text IS NULL OR u.username ILIKE '%' || $3 || '%') AND ($4::text IS NULL OR a.target_type=$4) AND ($5::text IS NULL OR a.target_id ILIKE '%' || $5 || '%') ORDER BY a.created_at DESC LIMIT $1",
+    [limit, action ?? null, actor ?? null, target_type ?? null, target_id ?? null]
+  );
   return { data: rows.rows };
 });
 
