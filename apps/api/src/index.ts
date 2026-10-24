@@ -37,11 +37,24 @@ async function audit(userId: string | null, action: string, request: import("fas
     [userId, action, targetType ?? null, targetId ?? null, request.ip]);
 }
 
-app.get("/api/health", async () => ({
-  status: "ok", service: "matrix-panel-api",
-  pterodactyl: pterodactylConfigured ? "configured" : "not_configured",
-  database: pool ? "configured" : "not_configured", timestamp: new Date().toISOString()
-}));
+app.get("/api/health", async (_request, reply) => {
+  let database: "connected" | "unavailable" | "not_configured" = "not_configured";
+  if (pool) {
+    try {
+      await pool.query("SELECT 1");
+      database = "connected";
+    } catch {
+      database = "unavailable";
+    }
+  }
+  const status = database === "unavailable" ? "degraded" : "ok";
+  if (status === "degraded") reply.code(503);
+  return {
+    status, service: "matrix-panel-api",
+    pterodactyl: pterodactylConfigured ? "configured" : "not_configured",
+    database, timestamp: new Date().toISOString()
+  };
+});
 
 app.post("/api/auth/setup", { config: { rateLimit: { max: 3, timeWindow: "1 hour" } } }, async (request, reply) => {
   if (!dbRequired(reply) || !originGuard(request, reply)) return;
