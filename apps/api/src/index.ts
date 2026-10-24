@@ -750,7 +750,22 @@ app.get("/api/admin/redeem-codes", { preHandler: requireAdmin }, async (request,
   return { data: result.rows };
 });
 
-app.setErrorHandler((error, _request, reply) => { app.log.error(error); reply.code(500).send({ error: "Internal server error" }); });
+app.setErrorHandler((error, request, reply) => {
+  const code = (error as { code?: string }).code ?? "";
+  const message = error instanceof Error ? error.message : "Unknown error";
+  const databaseUnavailable = code.startsWith("08")
+    || ["57P01", "57P02", "57P03", "53300", "53400", "ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH"].includes(code);
+  app.log.error({ err: error, requestId: request.id, method: request.method, url: request.url }, "Request failed");
+  if (reply.sent) return;
+  if (databaseUnavailable) {
+    return reply.code(503).send({
+      error: "Service temporarily unavailable",
+      message: "A required backend dependency is unavailable. Please retry shortly.",
+      requestId: request.id
+    });
+  }
+  return reply.code(500).send({ error: "Internal server error", requestId: request.id });
+});
 try { await migrate(); await app.listen({ host: config.API_HOST, port: config.API_PORT }); }
 catch (error) { app.log.error(error); process.exit(1); }
 for (const signal of ["SIGINT","SIGTERM"] as const) process.on(signal, async () => { await app.close(); await pool?.end(); process.exit(0); });
