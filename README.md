@@ -1,45 +1,57 @@
 # Matrix Panel
 
-Self-hosted game-server management dashboard designed for real Pterodactyl Panel integration. The UI does not fabricate server data.
+Self-hosted game-server management dashboard for Pterodactyl Panel. The UI is designed to use API-backed data rather than fabricated server records.
+
+## Current status
+
+**Staging / active development — not yet verified against a live production VPS, PostgreSQL database, or Pterodactyl instance.** A successful CI build proves compilation only; it does not prove all runtime flows or security controls are production-ready.
 
 ## Implemented foundation
 
-- React + TypeScript + Vite dashboard and Fastify + TypeScript API.
-- Real Pterodactyl Application API reads for servers, nodes, locations, users, nests and mounts.
-- PostgreSQL schema for users, sessions, audit logs, preferences, plans, redeem codes, user plans, balances and balance transactions.
-- Initial admin bootstrap guarded by a private setup token and disabled automatically once any user exists.
-- Scrypt password hashing, opaque server-side sessions stored as SHA-256 hashes, HttpOnly/SameSite cookies, login/setup rate limits and role-based route guards.
-- Authenticated profile preferences, admin-only user/audit and Pterodactyl resource endpoints, plans, redeem codes, balances and settings APIs.
-- Per-user Pterodactyl Client API key connection; credentials are encrypted at rest with AES-256-GCM and are never returned to the browser.
-- Per-user server inventory, power actions, authenticated WebSocket console proxy, file listing/read/write, backup creation, and read access to schedules, databases, network allocations, startup, settings and server users. Pterodactyl continues to enforce permissions attached to each user's own Client API key.
-- Admin UI views for live users, nodes, locations, nests, mounts, plans, redeem codes, balances, settings and audit data, including user/plan/code creation and balance adjustment forms.
-- User UI for profile updates, password changes, preferences/themes, plan history, balance and redeem-code activation.
-- Server UI with console, power controls, file editor and tabs for backups, schedules, databases, network, startup, settings and users.
-- Responsive sign-in screen; API keys stay on the server.
+- React + TypeScript + Vite web dashboard and Fastify + TypeScript API.
+- PostgreSQL-backed users, sessions, audit logs, preferences, plans, redeem codes, user plans, balances and balance transactions.
+- Initial admin bootstrap protected by a one-time setup token.
+- Password hashing, hashed server-side session tokens, HttpOnly/SameSite cookies, rate limits and role-guarded API routes.
+- Pterodactyl Application API integration for server and administrative resource reads.
+- Per-user Pterodactyl Client API key support; credentials are encrypted at rest and never returned to the browser.
+- User server inventory, power actions, WebSocket console proxy, file operations and read access to server-related resources, subject to the connected user's Pterodactyl permissions.
+- Admin and user dashboard views for supported account, plan, balance and server-management flows.
+
+Feature coverage in the code is not a substitute for end-to-end testing. Treat server controls and admin/billing workflows as unverified until tested against a disposable staging Pterodactyl environment.
 
 ## Requirements
 
-- Node.js 22+, npm 10+, PostgreSQL 14+.
-- A Pterodactyl Panel and an Application API key with the required read permissions.
+- Debian/Ubuntu or another supported Linux environment.
+- Node.js 22+ and npm.
+- PostgreSQL 14+ reachable privately by the API.
+- A running Pterodactyl Panel and a least-privilege Application API key.
+- A domain pointed to the VPS for public HTTPS deployment.
 
-## Setup
+## Production-shaped deployment outline
 
-1. Copy .env.example to .env in the repository root.
-2. Set DATABASE_URL, WEB_ORIGIN, a long random SETUP_TOKEN (at least 24 characters), and CREDENTIAL_ENCRYPTION_KEY generated with openssl rand -base64 32. Back up the encryption key securely; changing it makes existing saved credentials unreadable.
-3. Set PTERODACTYL_URL and PTERODACTYL_APPLICATION_KEY on the API server only. Never put the Application API key in frontend variables or commit it.
-4. Run npm install then npm run dev.
-5. Create the initial administrator with a POST request to /api/auth/setup using JSON fields setupToken, email, username and password (minimum 12 characters). Keep the setup token private; remove it from the environment after setup.
-6. Open http://localhost:5173 and sign in.
+1. Create a dedicated Linux service account and install Node.js 22+.
+2. Install PostgreSQL locally or use a private managed database. Do not expose PostgreSQL port 5432 publicly.
+3. Clone this repository to `/opt/matrix-panel` and ensure the service account can read the files and build output.
+4. Copy `.env.example` to `.env`; set `NODE_ENV=production`, `API_HOST=127.0.0.1`, `API_PORT=3001`, the public `WEB_ORIGIN`, a unique `SETUP_TOKEN` of at least 24 characters, a valid `DATABASE_URL`, `PTERODACTYL_URL`, and `PTERODACTYL_APPLICATION_KEY`.
+5. Generate `CREDENTIAL_ENCRYPTION_KEY` using `openssl rand -base64 32`. Back it up securely; changing it can make stored encrypted credentials unreadable. Never commit or share `.env` or API keys.
+6. Run `scripts/install.sh` to install dependencies and build both workspaces. This script does not create database users, configure DNS/TLS/firewall, or start the service.
+7. Configure Nginx from `deploy/nginx/matrix-panel.conf.example`; set the correct hostname and build path. Validate using `nginx -t` and configure HTTPS before public logins.
+8. Configure `deploy/systemd/matrix-panel-api.service.example` for the actual service account, app directory and environment-file location. Start the API only after the database and environment are configured.
+9. Verify `/api/live` and `/api/ready` locally. Create the first administrator by POSTing `setupToken`, `email`, `username` and a password of at least 12 characters to `/api/auth/setup`. Remove `SETUP_TOKEN` and restart the API immediately after setup.
+10. Test authentication, permissions, Pterodactyl reads, power controls, console/WebSocket, file operations, backups, schedules and admin flows using a disposable staging instance before production use.
+11. Configure HTTPS renewal, firewall restrictions, off-host database backups, log monitoring and a recovery procedure.
 
-## Work still remaining
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the deployment checklist and Nginx details.
 
-This is not production-ready and has not yet been tested against a live database or Pterodactyl instance. Console/WebSocket, file editing/upload/download, backups, schedules, full admin CRUD, billing/payment processing and deployment hardening still need implementation. Do not expose this development build publicly until the remaining work is completed and tested.
+## CI
 
+GitHub Actions type-checks and builds the API and web workspaces. A green CI run is not an end-to-end test against a real database or Pterodactyl instance.
 
-## CI and production deployment templates
+## Security reminders
 
-- GitHub Actions checks the API/web TypeScript projects and builds both workspaces on pushes and pull requests.
-- `deploy/nginx.conf.example` serves the built SPA and proxies API + WebSocket traffic to localhost port 3001.
-- `deploy/matrix-panel.service.example` is a hardened systemd service template. Create a dedicated `matrix-panel` Linux account and install the environment file at `/etc/matrix-panel/matrix-panel.env` before enabling it.
-
-These are deployment templates, not a claim that a live server has been provisioned. Configure HTTPS, database backups, firewall rules, and a unique encryption/session secret before production use. Do not commit `.env` files or Pterodactyl API keys.
+- Keep `PTERODACTYL_APPLICATION_KEY` server-side only and grant only the permissions required.
+- Do not expose the API directly to the internet; bind it to loopback behind HTTPS Nginx.
+- Do not expose PostgreSQL publicly.
+- Use a unique, strong setup token and remove it after first-admin creation.
+- Back up the credential-encryption key securely.
+- Keep this in staging until integration tests and a security review pass.
