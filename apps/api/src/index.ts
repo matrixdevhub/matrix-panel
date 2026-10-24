@@ -56,6 +56,35 @@ app.get("/api/health", async (_request, reply) => {
   };
 });
 
+// Readiness is stricter than liveness: traffic should only be routed here when the database is reachable.
+app.get("/api/ready", async (_request, reply) => {
+  if (!pool) {
+    return reply.code(503).send({
+      status: "not_ready",
+      service: "matrix-panel-api",
+      database: "not_configured",
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  try {
+    await pool.query("SELECT 1");
+    return {
+      status: "ready",
+      service: "matrix-panel-api",
+      database: "connected",
+      timestamp: new Date().toISOString()
+    };
+  } catch {
+    return reply.code(503).send({
+      status: "not_ready",
+      service: "matrix-panel-api",
+      database: "unavailable",
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 app.post("/api/auth/setup", { config: { rateLimit: { max: 3, timeWindow: "1 hour" } } }, async (request, reply) => {
   if (!dbRequired(reply) || !originGuard(request, reply)) return;
   const parsed = z.object({ setupToken: z.string().min(24), email: z.string().email().max(254),
