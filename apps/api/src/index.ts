@@ -310,6 +310,22 @@ app.post("/api/profile/servers/:identifier/plugins/upload-url", { preHandler: re
   if (!token) return reply.code(409).send({ error: "Connect your Pterodactyl Client API key first" });
   try {
     const result = await clientRequest<unknown>(token, "/servers/" + params.data.identifier + "/files/upload?directory=%2Fplugins");
+    const uploadItems = Array.isArray(result) ? result : [result];
+    const findUploadUrl = (value: unknown): string | null => {
+      if (typeof value === "string") {
+        try { const parsed = new URL(value); return parsed.protocol === "https:" ? value : null; } catch { return null; }
+      }
+      if (!value || typeof value !== "object") return null;
+      const item = value as Record<string, unknown>;
+      for (const key of ["url", "attributes", "data"]) {
+        const found = findUploadUrl(item[key]);
+        if (found) return found;
+      }
+      return null;
+    };
+    if (!uploadItems.some(item => findUploadUrl(item))) {
+      return reply.code(502).send({ error: "Pterodactyl returned an invalid upload URL", message: "The plugin upload endpoint must return an HTTPS URL." });
+    }
     await audit(request.sessionUser!.id, "server.plugin.upload_url", request, "server", params.data.identifier);
     return result;
   } catch (error) { const e = error as { statusCode?: number; message?: string }; return reply.code(e.statusCode ?? 502).send({ error: "Could not prepare plugin upload", message: e.message ?? "Pterodactyl Client API failed" }); }
