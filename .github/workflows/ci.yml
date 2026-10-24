@@ -23,6 +23,8 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install
+      - name: Check deployment scripts syntax
+        run: bash -n scripts/install.sh && bash -n scripts/smoke-test.sh
       - name: Run API security regression tests
         run: npm run test --workspace @matrix-panel/api
       - name: Type-check API and web
