@@ -18,6 +18,20 @@ await app.register(cookie);
 await app.register(rateLimit, { max: 100, timeWindow: "1 minute" });
 await app.register(websocket);
 app.addHook("preHandler", authenticate);
+type ApiMetrics = { requests: number; errors: number; totalDurationMs: number; maxDurationMs: number };
+const apiMetrics: ApiMetrics = { requests: 0, errors: 0, totalDurationMs: 0, maxDurationMs: 0 };
+const startedAt = Date.now();
+
+// Keep metrics low-cardinality and process-local; do not retain URLs, IPs, or user data.
+app.addHook("onResponse", async (request, reply) => {
+  if (request.url === "/api/admin/metrics") return;
+  const durationMs = Math.max(0, reply.elapsedTime);
+  apiMetrics.requests += 1;
+  if (reply.statusCode >= 500) apiMetrics.errors += 1;
+  apiMetrics.totalDurationMs += durationMs;
+  apiMetrics.maxDurationMs = Math.max(apiMetrics.maxDurationMs, durationMs);
+});
+
 const COOKIE = "matrix_session";
 const cookieOptions = { path: "/", httpOnly: true, secure: config.NODE_ENV === "production", sameSite: "strict" as const, maxAge: 604800 };
 function dbRequired(reply: import("fastify").FastifyReply) {
@@ -43,6 +57,30 @@ app.get("/api/live", async () => ({
   service: "matrix-panel-api",
   timestamp: new Date().toISOString()
 }));
+
+app.get("/api/admin/metrics", { preHandler: requireAdmin }, async () => {
+  const memory = process.memoryUsage();
+  return {
+    service: "matrix-panel-api",
+    uptimeSeconds: Math.floor(process.uptime()),
+    startedAt: new Date(startedAt).toISOString(),
+    requests: {
+      total: apiMetrics.requests,
+      serverErrors: apiMetrics.errors,
+      averageDurationMs: apiMetrics.requests
+        ? Number((apiMetrics.totalDurationMs / apiMetrics.requests).toFixed(2))
+        : 0,
+      maxDurationMs: Number(apiMetrics.maxDurationMs.toFixed(2))
+    },
+    memoryBytes: {
+      rss: memory.rss,
+      heapUsed: memory.heapUsed,
+      heapTotal: memory.heapTotal,
+      external: memory.external
+    },
+    timestamp: new Date().toISOString()
+  };
+});
 
 app.get("/api/health", async (_request, reply) => {
   let database: "connected" | "unavailable" | "not_configured" = "not_configured";
