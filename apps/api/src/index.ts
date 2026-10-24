@@ -11,6 +11,10 @@ import { authenticate, requireAdmin, requireUser } from "./auth.js";
 import { hashPassword, hashToken, randomToken, verifyPassword } from "./security.js";
 import { getPanelSummary, getServers, PterodactylError, applicationRequest } from "./pterodactyl.js";
 import { clientRequest, decryptCredential, encryptCredential } from "./pterodactyl-client.js";
+import { validateConsoleWebSocketUrl } from "./console-websocket-security.js";
+import { normalizeClientServer, normalizePowerSignal, type ClientServerRecord } from "./pterodactyl-server-data.js";
+import { InvalidServerPathError, normalizeServerPath } from "./server-path-security.js";
+import { normalizeConsoleCommandMessage } from "./console-message-security.js";
 
 const app = Fastify({ logger: true, bodyLimit: 1_048_576, trustProxy: config.NODE_ENV === "production" });
 await app.register(cors, { origin: config.WEB_ORIGIN, credentials: true });
@@ -156,6 +160,54 @@ app.post("/api/auth/setup", { config: { rateLimit: { max: 3, timeWindow: "1 hour
   return reply.code(201).send({ user });
 });
 
+app.post("/api/auth/register", { config: { rateLimit: { max: 5, timeWindow: "1 hour" } } }, async (request, reply) => {
+  if (!dbRequired(reply) || !originGuard(request, reply)) return;
+  const registrationSetting = await pool!.query("SELECT setting_value FROM panel_settings WHERE setting_key='registration.enabled'");
+  if (registrationSetting.rowCount && registrationSetting.rows[0].setting_value === false) {
+    return reply.code(403).send({ error: "Registration is disabled by the administrator" });
+  }
+  const parsed = z.object({
+    email: z.string().trim().email().max(254),
+    username: z.string().trim().min(3).max(32).regex(/^[a-zA-Z0-9_-]+$/),
+    password: z.string().min(12).max(128)
+  }).strict().safeParse(request.body);
+  if (!parsed.success) return reply.code(400).send({
+    error: "Invalid registration data",
+    message: "Use a valid email, a 3–32 character username, and a password of at least 12 characters."
+  });
+
+  const client = await pool!.connect();
+  let user: { id: string; email: string; username: string; role: string };
+  try {
+    await client.query("BEGIN");
+    const created = await client.query(
+      "INSERT INTO users(email,username,password_hash,role) VALUES($1,$2,$3,'user') RETURNING id,email,username,role",
+      [parsed.data.email.toLowerCase(), parsed.data.username, await hashPassword(parsed.data.password)]
+    );
+    user = created.rows[0];
+    await client.query("INSERT INTO balances(user_id) VALUES($1) ON CONFLICT(user_id) DO NOTHING", [user.id]);
+    await client.query("INSERT INTO user_preferences(user_id) VALUES($1) ON CONFLICT(user_id) DO NOTHING", [user.id]);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    if ((error as { code?: string }).code === "23505") {
+      return reply.code(409).send({ error: "That username or email is already in use" });
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  const token = randomToken();
+  await pool!.query(
+    "INSERT INTO sessions(token_hash,user_id,expires_at) VALUES($1,$2,NOW()+INTERVAL '7 days')",
+    [hashToken(token), user.id]
+  );
+  reply.setCookie(COOKIE, token, cookieOptions);
+  await audit(String(user.id), "auth.register", request, "user", String(user.id));
+  return reply.code(201).send({ user: { id: String(user.id), email: user.email, username: user.username, role: user.role } });
+});
+
 app.post("/api/auth/login", { config: { rateLimit: { max: 8, timeWindow: "15 minutes" } } }, async (request, reply) => {
   if (!dbRequired(reply) || !originGuard(request, reply)) return;
   const parsed = z.object({ login: z.string().min(1).max(254), password: z.string().min(1).max(128) }).safeParse(request.body);
@@ -174,6 +226,37 @@ app.post("/api/auth/logout", async (request, reply) => {
   const token = request.cookies?.[COOKIE];
   if (token && pool) await pool.query("DELETE FROM sessions WHERE token_hash=$1", [hashToken(token)]);
   reply.clearCookie(COOKIE, { path: "/", sameSite: "strict", secure: config.NODE_ENV === "production" });
+  return { ok: true };
+});
+app.get("/api/auth/sessions", { preHandler: requireUser }, async (request, reply) => {
+  if (!dbRequired(reply)) return;
+  const currentToken = request.cookies?.[COOKIE];
+  const result = await pool!.query(
+    "SELECT id,created_at,expires_at,token_hash=$2 AS current FROM sessions WHERE user_id=$1 AND expires_at>NOW() ORDER BY created_at DESC",
+    [request.sessionUser!.id, currentToken ? hashToken(currentToken) : ""]
+  );
+  return { data: result.rows };
+});
+app.delete("/api/auth/sessions/:id", { preHandler: requireUser }, async (request, reply) => {
+  if (!dbRequired(reply) || !originGuard(request, reply)) return;
+  const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(request.params);
+  if (!params.success) return reply.code(400).send({ error: "Invalid session id" });
+  const result = await pool!.query(
+    "DELETE FROM sessions WHERE id=$1 AND user_id=$2 AND token_hash<>$3 RETURNING id",
+    [params.data.id, request.sessionUser!.id, request.cookies?.[COOKIE] ? hashToken(request.cookies[COOKIE]!) : ""]
+  );
+  if (!result.rowCount) return reply.code(404).send({ error: "Session not found or it is the current session" });
+  await audit(request.sessionUser!.id, "auth.session.revoke", request, "session", String(params.data.id));
+  return { ok: true };
+});
+app.delete("/api/auth/sessions", { preHandler: requireUser }, async (request, reply) => {
+  if (!dbRequired(reply) || !originGuard(request, reply)) return;
+  const currentToken = request.cookies?.[COOKIE];
+  await pool!.query(
+    "DELETE FROM sessions WHERE user_id=$1 AND token_hash<>$2",
+    [request.sessionUser!.id, currentToken ? hashToken(currentToken) : ""]
+  );
+  await audit(request.sessionUser!.id, "auth.sessions.revoke_others", request, "user", request.sessionUser!.id);
   return { ok: true };
 });
 app.get("/api/auth/me", { preHandler: requireUser }, async request => ({ user: request.sessionUser }));
@@ -276,13 +359,23 @@ app.get("/api/profile/servers", { preHandler: requireUser }, async (request, rep
   catch { return reply.code(503).send({ error: "Could not decrypt saved credentials. Check CREDENTIAL_ENCRYPTION_KEY." }); }
   if (!token) return reply.code(409).send({ error: "Connect your own Pterodactyl Client API key in profile settings first." });
   try {
-    const response = await clientRequest<{ data: Array<{ attributes: Record<string, any> }> }>(token, "/servers");
-    return { data: response.data.map(({ attributes: s }) => ({
-      id: s.identifier, uuid: s.uuid, identifier: s.identifier, name: s.name,
-      description: s.description ?? "", node: s.node ?? "—", ownerId: request.sessionUser!.id,
-      status: s.is_suspended ? "suspended" : s.is_installing ? "installing" : (s.current_state ?? s.status ?? "unknown"),
-      limits: { memory: s.limits?.memory ?? 0, disk: s.limits?.disk ?? 0, cpu: s.limits?.cpu ?? 0 }
-    })) };
+    const response = await clientRequest<{ data: Array<{ attributes: ClientServerRecord }> }>(token, "/servers");
+    const data = await Promise.all(response.data.map(async ({ attributes: server }) => {
+      // The Client API server list may omit current_state. Read the live resource
+      // endpoint for each server; one unavailable status must not hide the inventory.
+      let liveState: string | null = null;
+      try {
+        const resource = await clientRequest<{ attributes?: { current_state?: string | null } }>(
+          token,
+          "/servers/" + encodeURIComponent(server.identifier) + "/resources"
+        );
+        liveState = resource.attributes?.current_state ?? null;
+      } catch {
+        // Display "unknown" rather than inventing an online/offline status.
+      }
+      return normalizeClientServer(server, request.sessionUser!.id, liveState);
+    }));
+    return { data };
   } catch (error) {
     const e = error as { statusCode?: number; message?: string };
     return reply.code(e.statusCode ?? 502).send({ error: "Unable to load your servers", message: e.message ?? "Pterodactyl Client API failed" });
@@ -291,16 +384,17 @@ app.get("/api/profile/servers", { preHandler: requireUser }, async (request, rep
 app.post("/api/profile/servers/:identifier/power", { preHandler: requireUser }, async (request, reply) => {
   if (!originGuard(request, reply)) return;
   const params = z.object({ identifier: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/) }).safeParse(request.params);
-  const body = z.object({ signal: z.enum(["start","stop","restart","kill"]) }).safeParse(request.body);
-  if (!params.success || !body.success) return reply.code(400).send({ error: "Invalid server or power signal" });
+  const body = z.object({ signal: z.string() }).safeParse(request.body);
+  const signal = body.success ? normalizePowerSignal(body.data.signal) : null;
+  if (!params.success || !signal) return reply.code(400).send({ error: "Invalid server or power signal. Use start, stop, or restart." });
   let token: string | null;
   try { token = await userClientToken(request.sessionUser!.id); }
   catch { return reply.code(503).send({ error: "Could not decrypt saved credentials" }); }
   if (!token) return reply.code(409).send({ error: "Connect your Pterodactyl Client API key first" });
   try {
-    await clientRequest(token, "/servers/" + params.data.identifier + "/power", "POST", { signal: body.data.signal });
-    await audit(request.sessionUser!.id, "server.power." + body.data.signal, request, "server", params.data.identifier);
-    return { ok: true, signal: body.data.signal };
+    await clientRequest(token, "/servers/" + params.data.identifier + "/power", "POST", { signal });
+    await audit(request.sessionUser!.id, "server.power." + signal, request, "server", params.data.identifier);
+    return { ok: true, signal };
   } catch (error) {
     const e = error as { statusCode?: number; message?: string };
     return reply.code(e.statusCode ?? 502).send({ error: "Server power action failed", message: e.message ?? "Pterodactyl Client API failed" });
@@ -310,11 +404,17 @@ app.get("/api/profile/servers/:identifier/files", { preHandler: requireUser }, a
   const params = z.object({ identifier: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/) }).safeParse(request.params);
   const query = z.object({ directory: z.string().max(1000).default("/") }).safeParse(request.query);
   if (!params.success || !query.success) return reply.code(400).send({ error: "Invalid server or directory" });
+  let directory: string;
+  try { directory = normalizeServerPath(query.data.directory, { allowRoot: true }); }
+  catch (error) {
+    if (error instanceof InvalidServerPathError) return reply.code(400).send({ error: error.message });
+    throw error;
+  }
   let token: string | null;
   try { token = await userClientToken(request.sessionUser!.id); }
   catch { return reply.code(503).send({ error: "Could not decrypt saved credentials" }); }
   if (!token) return reply.code(409).send({ error: "Connect your Pterodactyl Client API key first" });
-  try { return await clientRequest(token, "/servers/" + params.data.identifier + "/files/list?directory=" + encodeURIComponent(query.data.directory)); }
+  try { return await clientRequest(token, "/servers/" + params.data.identifier + "/files/list?directory=" + encodeURIComponent(directory)); }
   catch (error) {
     const e = error as { statusCode?: number; message?: string };
     return reply.code(e.statusCode ?? 502).send({ error: "File listing failed", message: e.message ?? "Pterodactyl Client API failed" });
@@ -325,6 +425,11 @@ app.get("/api/profile/servers/:identifier/files", { preHandler: requireUser }, a
 
 app.get("/api/profile/servers/:identifier/console", { websocket: true, preHandler: requireUser }, (browserSocket, request) => {
   void (async () => {
+    // Browser console sockets must come from the configured web origin.
+    if (request.headers.origin !== config.WEB_ORIGIN) {
+      browserSocket.close(1008, "Origin not allowed");
+      return;
+    }
     const params = z.object({ identifier: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/) }).safeParse(request.params);
     if (!params.success) { browserSocket.close(1008, "Invalid server identifier"); return; }
     let token: string | null;
@@ -333,22 +438,55 @@ app.get("/api/profile/servers/:identifier/console", { websocket: true, preHandle
     if (!token) { browserSocket.close(1008, "Connect your Pterodactyl Client API key first"); return; }
     try {
       const credentials = await clientRequest<{ data: { socket: string; token: string } }>(token, "/servers/" + params.data.identifier + "/websocket");
-      const remote = new WebSocket(credentials.data.socket, { handshakeTimeout: 10000 });
+      let socketUrl: URL;
+      try {
+        socketUrl = validateConsoleWebSocketUrl(credentials.data.socket, config.NODE_ENV);
+      } catch {
+        browserSocket.close(1008, "Invalid upstream console URL");
+        return;
+      }
+      const remote = new WebSocket(socketUrl.toString(), { handshakeTimeout: 10000 });
       let authenticated = false;
       const closeBoth = (code?: number, reason?: Buffer) => {
         if (browserSocket.readyState === WebSocket.OPEN || browserSocket.readyState === WebSocket.CONNECTING) browserSocket.close(code, reason?.toString());
         if (remote.readyState === WebSocket.OPEN || remote.readyState === WebSocket.CONNECTING) remote.close();
       };
       remote.on("open", () => {
+        // A successful TCP/WebSocket handshake does not mean Pterodactyl accepted
+        // the short-lived console token. Do not allow browser commands until the
+        // upstream explicitly confirms authentication.
         remote.send(JSON.stringify({ event: "auth", args: [credentials.data.token] }));
-        authenticated = true;
       });
-      remote.on("message", data => { if (browserSocket.readyState === WebSocket.OPEN) browserSocket.send(data.toString()); });
+      remote.on("message", data => {
+        const message = data.toString();
+        let eventName = "";
+        try {
+          const parsed = JSON.parse(message) as { event?: unknown };
+          if (typeof parsed.event === "string") eventName = parsed.event;
+        } catch {
+          // Preserve non-JSON upstream messages for diagnostics; never treat them as auth success.
+        }
+        if (eventName === "auth success" && !authenticated) {
+          authenticated = true;
+          remote.send(JSON.stringify({ event: "send logs", args: [null] }));
+          remote.send(JSON.stringify({ event: "send stats", args: [] }));
+        } else if (eventName === "auth error") {
+          if (browserSocket.readyState === WebSocket.OPEN) browserSocket.send(message);
+          closeBoth(1008, Buffer.from("Pterodactyl console authentication failed"));
+          return;
+        }
+        if (browserSocket.readyState === WebSocket.OPEN) browserSocket.send(message);
+      });
       remote.on("close", (code, reason) => { if (browserSocket.readyState === WebSocket.OPEN) browserSocket.close(code, reason.toString()); });
       remote.on("error", () => closeBoth(1011, Buffer.from("Pterodactyl console connection failed")));
       browserSocket.on("message", data => {
         if (remote.readyState !== WebSocket.OPEN || !authenticated) return;
-        remote.send(data.toString());
+        const safeMessage = normalizeConsoleCommandMessage(data.toString());
+        if (!safeMessage) {
+          closeBoth(1008, Buffer.from("Unsupported or invalid console command"));
+          return;
+        }
+        remote.send(safeMessage);
       });
       browserSocket.on("close", () => { if (remote.readyState === WebSocket.OPEN) remote.close(); });
       browserSocket.on("error", () => closeBoth());
@@ -376,10 +514,16 @@ app.get("/api/profile/servers/:identifier/files/contents", { preHandler: require
   const params = z.object({ identifier: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/) }).safeParse(request.params);
   const query = z.object({ file: z.string().min(1).max(1000) }).safeParse(request.query);
   if (!params.success || !query.success) return reply.code(400).send({ error: "Invalid file path" });
+  let filePath: string;
+  try { filePath = normalizeServerPath(query.data.file); }
+  catch (error) {
+    if (error instanceof InvalidServerPathError) return reply.code(400).send({ error: error.message });
+    throw error;
+  }
   let token: string | null;
   try { token = await userClientToken(request.sessionUser!.id); } catch { return reply.code(503).send({ error: "Could not decrypt saved credentials" }); }
   if (!token) return reply.code(409).send({ error: "Connect your Pterodactyl Client API key first" });
-  try { return await clientRequest<string>(token, "/servers/" + params.data.identifier + "/files/contents?file=" + encodeURIComponent(query.data.file)); }
+  try { return await clientRequest<string>(token, "/servers/" + params.data.identifier + "/files/contents?file=" + encodeURIComponent(filePath)); }
   catch (error) { const e = error as { statusCode?: number; message?: string }; return reply.code(e.statusCode ?? 502).send({ error: "Could not read file", message: e.message ?? "Pterodactyl Client API failed" }); }
 });
 app.delete("/api/profile/servers/:identifier/files", { preHandler: requireUser }, async (request, reply) => {
@@ -433,11 +577,17 @@ app.put("/api/profile/servers/:identifier/files/contents", { preHandler: require
   const query = z.object({ file: z.string().min(1).max(1000) }).safeParse(request.query);
   const body = z.object({ content: z.string().max(2_000_000) }).safeParse(request.body);
   if (!params.success || !query.success || !body.success) return reply.code(400).send({ error: "Invalid file update" });
+  let filePath: string;
+  try { filePath = normalizeServerPath(query.data.file); }
+  catch (error) {
+    if (error instanceof InvalidServerPathError) return reply.code(400).send({ error: error.message });
+    throw error;
+  }
   let token: string | null;
   try { token = await userClientToken(request.sessionUser!.id); } catch { return reply.code(503).send({ error: "Could not decrypt saved credentials" }); }
   if (!token) return reply.code(409).send({ error: "Connect your Pterodactyl Client API key first" });
   try {
-    await clientRequest(token, "/servers/" + params.data.identifier + "/files/write?file=" + encodeURIComponent(query.data.file), "POST", body.data.content);
+    await clientRequest(token, "/servers/" + params.data.identifier + "/files/write?file=" + encodeURIComponent(filePath), "POST", body.data.content);
     await audit(request.sessionUser!.id, "server.file.write", request, "server", params.data.identifier);
     return { ok: true };
   } catch (error) { const e = error as { statusCode?: number; message?: string }; return reply.code(e.statusCode ?? 502).send({ error: "Could not write file", message: e.message ?? "Pterodactyl Client API failed" }); }
