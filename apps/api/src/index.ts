@@ -13,6 +13,7 @@ import { getPanelSummary, getServers, PterodactylError, applicationRequest } fro
 import { clientRequest, decryptCredential, encryptCredential } from "./pterodactyl-client.js";
 import { validateConsoleWebSocketUrl } from "./console-websocket-security.js";
 import { normalizeClientServer, normalizePowerSignal, type ClientServerRecord } from "./pterodactyl-server-data.js";
+import { InvalidServerPathError, normalizeServerPath } from "./server-path-security.js";
 
 const app = Fastify({ logger: true, bodyLimit: 1_048_576, trustProxy: config.NODE_ENV === "production" });
 await app.register(cors, { origin: config.WEB_ORIGIN, credentials: true });
@@ -323,11 +324,17 @@ app.get("/api/profile/servers/:identifier/files", { preHandler: requireUser }, a
   const params = z.object({ identifier: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/) }).safeParse(request.params);
   const query = z.object({ directory: z.string().max(1000).default("/") }).safeParse(request.query);
   if (!params.success || !query.success) return reply.code(400).send({ error: "Invalid server or directory" });
+  let directory: string;
+  try { directory = normalizeServerPath(query.data.directory, { allowRoot: true }); }
+  catch (error) {
+    if (error instanceof InvalidServerPathError) return reply.code(400).send({ error: error.message });
+    throw error;
+  }
   let token: string | null;
   try { token = await userClientToken(request.sessionUser!.id); }
   catch { return reply.code(503).send({ error: "Could not decrypt saved credentials" }); }
   if (!token) return reply.code(409).send({ error: "Connect your Pterodactyl Client API key first" });
-  try { return await clientRequest(token, "/servers/" + params.data.identifier + "/files/list?directory=" + encodeURIComponent(query.data.directory)); }
+  try { return await clientRequest(token, "/servers/" + params.data.identifier + "/files/list?directory=" + encodeURIComponent(directory)); }
   catch (error) {
     const e = error as { statusCode?: number; message?: string };
     return reply.code(e.statusCode ?? 502).send({ error: "File listing failed", message: e.message ?? "Pterodactyl Client API failed" });
@@ -401,10 +408,16 @@ app.get("/api/profile/servers/:identifier/files/contents", { preHandler: require
   const params = z.object({ identifier: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/) }).safeParse(request.params);
   const query = z.object({ file: z.string().min(1).max(1000) }).safeParse(request.query);
   if (!params.success || !query.success) return reply.code(400).send({ error: "Invalid file path" });
+  let filePath: string;
+  try { filePath = normalizeServerPath(query.data.file); }
+  catch (error) {
+    if (error instanceof InvalidServerPathError) return reply.code(400).send({ error: error.message });
+    throw error;
+  }
   let token: string | null;
   try { token = await userClientToken(request.sessionUser!.id); } catch { return reply.code(503).send({ error: "Could not decrypt saved credentials" }); }
   if (!token) return reply.code(409).send({ error: "Connect your Pterodactyl Client API key first" });
-  try { return await clientRequest<string>(token, "/servers/" + params.data.identifier + "/files/contents?file=" + encodeURIComponent(query.data.file)); }
+  try { return await clientRequest<string>(token, "/servers/" + params.data.identifier + "/files/contents?file=" + encodeURIComponent(filePath)); }
   catch (error) { const e = error as { statusCode?: number; message?: string }; return reply.code(e.statusCode ?? 502).send({ error: "Could not read file", message: e.message ?? "Pterodactyl Client API failed" }); }
 });
 app.delete("/api/profile/servers/:identifier/files", { preHandler: requireUser }, async (request, reply) => {
@@ -458,11 +471,17 @@ app.put("/api/profile/servers/:identifier/files/contents", { preHandler: require
   const query = z.object({ file: z.string().min(1).max(1000) }).safeParse(request.query);
   const body = z.object({ content: z.string().max(2_000_000) }).safeParse(request.body);
   if (!params.success || !query.success || !body.success) return reply.code(400).send({ error: "Invalid file update" });
+  let filePath: string;
+  try { filePath = normalizeServerPath(query.data.file); }
+  catch (error) {
+    if (error instanceof InvalidServerPathError) return reply.code(400).send({ error: error.message });
+    throw error;
+  }
   let token: string | null;
   try { token = await userClientToken(request.sessionUser!.id); } catch { return reply.code(503).send({ error: "Could not decrypt saved credentials" }); }
   if (!token) return reply.code(409).send({ error: "Connect your Pterodactyl Client API key first" });
   try {
-    await clientRequest(token, "/servers/" + params.data.identifier + "/files/write?file=" + encodeURIComponent(query.data.file), "POST", body.data.content);
+    await clientRequest(token, "/servers/" + params.data.identifier + "/files/write?file=" + encodeURIComponent(filePath), "POST", body.data.content);
     await audit(request.sessionUser!.id, "server.file.write", request, "server", params.data.identifier);
     return { ok: true };
   } catch (error) { const e = error as { statusCode?: number; message?: string }; return reply.code(e.statusCode ?? 502).send({ error: "Could not write file", message: e.message ?? "Pterodactyl Client API failed" }); }
