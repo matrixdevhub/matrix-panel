@@ -160,6 +160,50 @@ app.post("/api/auth/setup", { config: { rateLimit: { max: 3, timeWindow: "1 hour
   return reply.code(201).send({ user });
 });
 
+app.post("/api/auth/register", { config: { rateLimit: { max: 5, timeWindow: "1 hour" } } }, async (request, reply) => {
+  if (!dbRequired(reply) || !originGuard(request, reply)) return;
+  const parsed = z.object({
+    email: z.string().trim().email().max(254),
+    username: z.string().trim().min(3).max(32).regex(/^[a-zA-Z0-9_-]+$/),
+    password: z.string().min(12).max(128)
+  }).strict().safeParse(request.body);
+  if (!parsed.success) return reply.code(400).send({
+    error: "Invalid registration data",
+    message: "Use a valid email, a 3–32 character username, and a password of at least 12 characters."
+  });
+
+  const client = await pool!.connect();
+  let user: { id: string; email: string; username: string; role: string };
+  try {
+    await client.query("BEGIN");
+    const created = await client.query(
+      "INSERT INTO users(email,username,password_hash,role) VALUES($1,$2,$3,'user') RETURNING id,email,username,role",
+      [parsed.data.email.toLowerCase(), parsed.data.username, await hashPassword(parsed.data.password)]
+    );
+    user = created.rows[0];
+    await client.query("INSERT INTO balances(user_id) VALUES($1) ON CONFLICT(user_id) DO NOTHING", [user.id]);
+    await client.query("INSERT INTO user_preferences(user_id) VALUES($1) ON CONFLICT(user_id) DO NOTHING", [user.id]);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    if ((error as { code?: string }).code === "23505") {
+      return reply.code(409).send({ error: "That username or email is already in use" });
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  const token = randomToken();
+  await pool!.query(
+    "INSERT INTO sessions(token_hash,user_id,expires_at) VALUES($1,$2,NOW()+INTERVAL '7 days')",
+    [hashToken(token), user.id]
+  );
+  reply.setCookie(COOKIE, token, cookieOptions);
+  await audit(String(user.id), "auth.register", request, "user", String(user.id));
+  return reply.code(201).send({ user: { id: String(user.id), email: user.email, username: user.username, role: user.role } });
+});
+
 app.post("/api/auth/login", { config: { rateLimit: { max: 8, timeWindow: "15 minutes" } } }, async (request, reply) => {
   if (!dbRequired(reply) || !originGuard(request, reply)) return;
   const parsed = z.object({ login: z.string().min(1).max(254), password: z.string().min(1).max(128) }).safeParse(request.body);
@@ -178,6 +222,37 @@ app.post("/api/auth/logout", async (request, reply) => {
   const token = request.cookies?.[COOKIE];
   if (token && pool) await pool.query("DELETE FROM sessions WHERE token_hash=$1", [hashToken(token)]);
   reply.clearCookie(COOKIE, { path: "/", sameSite: "strict", secure: config.NODE_ENV === "production" });
+  return { ok: true };
+});
+app.get("/api/auth/sessions", { preHandler: requireUser }, async (request, reply) => {
+  if (!dbRequired(reply)) return;
+  const currentToken = request.cookies?.[COOKIE];
+  const result = await pool!.query(
+    "SELECT id,created_at,expires_at,token_hash=$2 AS current FROM sessions WHERE user_id=$1 AND expires_at>NOW() ORDER BY created_at DESC",
+    [request.sessionUser!.id, currentToken ? hashToken(currentToken) : ""]
+  );
+  return { data: result.rows };
+});
+app.delete("/api/auth/sessions/:id", { preHandler: requireUser }, async (request, reply) => {
+  if (!dbRequired(reply) || !originGuard(request, reply)) return;
+  const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(request.params);
+  if (!params.success) return reply.code(400).send({ error: "Invalid session id" });
+  const result = await pool!.query(
+    "DELETE FROM sessions WHERE id=$1 AND user_id=$2 AND token_hash<>$3 RETURNING id",
+    [params.data.id, request.sessionUser!.id, request.cookies?.[COOKIE] ? hashToken(request.cookies[COOKIE]!) : ""]
+  );
+  if (!result.rowCount) return reply.code(404).send({ error: "Session not found or it is the current session" });
+  await audit(request.sessionUser!.id, "auth.session.revoke", request, "session", String(params.data.id));
+  return { ok: true };
+});
+app.delete("/api/auth/sessions", { preHandler: requireUser }, async (request, reply) => {
+  if (!dbRequired(reply) || !originGuard(request, reply)) return;
+  const currentToken = request.cookies?.[COOKIE];
+  await pool!.query(
+    "DELETE FROM sessions WHERE user_id=$1 AND token_hash<>$2",
+    [request.sessionUser!.id, currentToken ? hashToken(currentToken) : ""]
+  );
+  await audit(request.sessionUser!.id, "auth.sessions.revoke_others", request, "user", request.sessionUser!.id);
   return { ok: true };
 });
 app.get("/api/auth/me", { preHandler: requireUser }, async request => ({ user: request.sessionUser }));
