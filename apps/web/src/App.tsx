@@ -319,12 +319,21 @@ export default function App() {
                   const urlResponse = await fetch(`${API}/api/profile/servers/${encodeURIComponent(selectedServer.identifier)}/plugins/upload-url`, { method: "POST", credentials: "include" });
                   const urlPayload = await urlResponse.json();
                   if (!urlResponse.ok) throw new Error(urlPayload.message || urlPayload.error || "Could not prepare plugin upload");
-                  const uploadUrl = urlPayload?.attributes?.url || urlPayload?.url || urlPayload?.data?.attributes?.url;
-                  if (typeof uploadUrl !== "string" || !/^https:\/\//i.test(uploadUrl)) throw new Error("Pterodactyl returned an invalid upload URL.");
+                  const uploadResult = Array.isArray(urlPayload) ? urlPayload[0] : urlPayload;
+                  const uploadUrl = typeof uploadResult === "string"
+                    ? uploadResult
+                    : uploadResult?.attributes?.url || uploadResult?.url || uploadResult?.data?.attributes?.url || uploadResult?.data?.url;
+                  if (typeof uploadUrl !== "string") throw new Error("Pterodactyl did not return an upload URL. Check the Client API permissions and panel version.");
+                  let parsedUploadUrl: URL;
+                  try { parsedUploadUrl = new URL(uploadUrl); } catch { throw new Error("Pterodactyl returned an invalid upload URL."); }
+                  if (parsedUploadUrl.protocol !== "https:") throw new Error("Pterodactyl returned an insecure upload URL; HTTPS is required.");
                   const form = new FormData();
                   form.append("files", file, file.name);
                   const uploadResponse = await fetch(uploadUrl, { method: "POST", body: form });
-                  if (!uploadResponse.ok) throw new Error("Upload failed (HTTP " + uploadResponse.status + "). Check server file permissions.");
+                  if (!uploadResponse.ok) {
+                    const detail = await uploadResponse.text().catch(() => "");
+                    throw new Error("Upload failed (HTTP " + uploadResponse.status + "). " + (detail.slice(0, 180) || "Check server file permissions and the panel upload limits."));
+                  }
                   setPluginFeedback("Uploaded " + file.name + ". Restart the server if required by the plugin.");
                   const listResponse = await fetch(`${API}/api/profile/servers/${encodeURIComponent(selectedServer.identifier)}/files?directory=${encodeURIComponent("/plugins")}`, { credentials: "include" });
                   const listPayload = await listResponse.json();
